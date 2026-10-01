@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/config/supabase_config.dart';
 
 import 'features/cashier/presentation/new_sale_screen.dart';
+import 'features/cashier/presentation/employee_dashboard.dart';
+import 'services/cashier_dashboard_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -159,6 +161,43 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 }
 
+String _constructFlexPosEmail(String rawInput) {
+  var trimmed = rawInput.trim().toLowerCase();
+  while (trimmed.endsWith('@flexpos.com')) {
+    trimmed = trimmed.substring(0, trimmed.length - '@flexpos.com'.length).trim();
+  }
+  if (trimmed.endsWith('@')) {
+    trimmed = trimmed.substring(0, trimmed.length - 1).trim();
+  }
+  return '$trimmed@flexpos.com';
+}
+
+String? _validateFlexPosUsername(String? value) {
+  if (value == null || value.trim().isEmpty) {
+    return '⚠ Please enter your username';
+  }
+  var clean = value.trim().toLowerCase();
+  while (clean.endsWith('@flexpos.com')) {
+    clean = clean.substring(0, clean.length - '@flexpos.com'.length).trim();
+  }
+  if (clean.endsWith('@')) {
+    clean = clean.substring(0, clean.length - 1).trim();
+  }
+  if (clean.isEmpty) {
+    return '⚠ Please enter a valid username';
+  }
+  if (clean.contains('@')) {
+    return '⚠ Username should not contain "@"';
+  }
+  if (RegExp(r'\s').hasMatch(clean)) {
+    return '⚠ Username should not contain spaces';
+  }
+  if (!RegExp(r'^[a-zA-Z0-9._-]+$').hasMatch(clean)) {
+    return '⚠ Please enter a valid FlexPOS username';
+  }
+  return null;
+}
+
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -211,7 +250,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       return;
     }
 
-    final email = _emailController.text.trim();
+    final email = _constructFlexPosEmail(_emailController.text);
     final password = _passwordController.text;
 
     setState(() => _isLoading = true);
@@ -259,6 +298,12 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           .maybeSingle();
 
       final role = profileData?['role'] as String? ?? 'employee';
+
+      if (role != 'admin') {
+        try {
+          await CashierDashboardService().startShiftOnLogin(user.id);
+        } catch (_) {}
+      }
 
       if (mounted) {
         if (role == 'admin') {
@@ -401,22 +446,14 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         const SizedBox(height: 32),
         _AuthTextField(
           controller: _emailController,
-          label: 'EMAIL ADDRESS',
-          hint: 'name@flexpos.com',
-          icon: Icons.mail_outline_rounded,
-          keyboardType: TextInputType.emailAddress,
+          label: 'USERNAME / EMAIL',
+          hint: 'username',
+          icon: Icons.person_outline_rounded,
+          fixedSuffixText: '@flexpos.com',
+          keyboardType: TextInputType.text,
           maxLength: 30,
           enabled: !_isLoading,
-          validator: (value) {
-            if (value == null || value.trim().isEmpty) {
-              return '⚠ Please enter your email address';
-            }
-            final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
-            if (!emailRegex.hasMatch(value.trim())) {
-              return '⚠ Please enter a valid email address';
-            }
-            return null;
-          },
+          validator: _validateFlexPosUsername,
           onChanged: (val) {
             if (_authError != null) setState(() => _authError = null);
           },
@@ -636,6 +673,7 @@ class _AuthTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final int? maxLength;
   final bool? isObscured;
+  final String? fixedSuffixText;
   final void Function(bool)? onVisibilityChanged;
   final void Function(String)? onSubmitted;
   final String? Function(String?)? validator;
@@ -651,6 +689,7 @@ class _AuthTextField extends StatelessWidget {
     this.keyboardType,
     this.maxLength,
     this.isObscured,
+    this.fixedSuffixText,
     this.onVisibilityChanged,
     this.onSubmitted,
     this.validator,
@@ -659,6 +698,37 @@ class _AuthTextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    Widget? suffixWidget;
+    if (fixedSuffixText != null) {
+      suffixWidget = Padding(
+        padding: const EdgeInsets.only(right: 14),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              fixedSuffixText!,
+              style: const TextStyle(
+                color: Color(0xFF003366),
+                fontWeight: FontWeight.bold,
+                fontSize: 14.5,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else if (isPassword) {
+      suffixWidget = IconButton(
+        icon: Icon(
+          (isObscured ?? true)
+              ? Icons.visibility_off_outlined
+              : Icons.visibility_outlined,
+          size: 20,
+          color: const Color(0xFF64748B),
+        ),
+        onPressed: () => onVisibilityChanged?.call(!(isObscured ?? true)),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -695,18 +765,7 @@ class _AuthTextField extends StatelessWidget {
               fontWeight: FontWeight.normal,
             ),
             prefixIcon: Icon(icon, size: 22, color: const Color(0xFF64748B)),
-            suffixIcon: isPassword
-                ? IconButton(
-                    icon: Icon(
-                      (isObscured ?? true)
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
-                      size: 20,
-                      color: const Color(0xFF64748B),
-                    ),
-                    onPressed: () => onVisibilityChanged?.call(!(isObscured ?? true)),
-                  )
-                : null,
+            suffixIcon: suffixWidget,
             filled: true,
             fillColor: Colors.white,
             contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
@@ -1160,121 +1219,6 @@ class HomePage extends StatelessWidget {
   }
 }
 
-class EmployeeDashboard extends StatelessWidget {
-  const EmployeeDashboard({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Image.asset(
-                'assets/FlexPOS_logo_upscaled.png',
-                height: 24,
-                errorBuilder: (_, _, _) => const Icon(Icons.store, size: 20, color: Color(0xFF003366)),
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Text('FlexPOS Terminal', style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
-        backgroundColor: const Color(0xFF003366),
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              if (SupabaseConfig.isConfigured) {
-                await Supabase.instance.client.auth.signOut();
-              }
-              if (context.mounted) {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const LoginPage()),
-                  (route) => false,
-                );
-              }
-            },
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Employee Terminal',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF003366)),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Operator / Cashier Terminal Workspace',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 40),
-            Expanded(
-              child: GridView.count(
-                crossAxisCount: MediaQuery.of(context).size.width > 600 ? 4 : 2,
-                crossAxisSpacing: 20,
-                mainAxisSpacing: 20,
-                children: [
-                  _buildHomeCard(context, 'New Sale', Icons.add_shopping_cart, const Color(0xFF8DB600), onTap: () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const NewSaleScreen()));
-                  }),
-                  _buildHomeCard(context, 'Search Products', Icons.search_outlined, const Color(0xFF003366)),
-                  _buildHomeCard(context, 'Customers', Icons.people_outline, Colors.orange),
-                  _buildHomeCard(context, 'Shift Orders', Icons.receipt_long_outlined, Colors.blueGrey),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHomeCard(BuildContext context, String title, IconData icon, Color color, {VoidCallback? onTap}) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide(color: Colors.grey.withValues(alpha: 0.1)),
-      ),
-      child: InkWell(
-        onTap: onTap ?? () {},
-        borderRadius: BorderRadius.circular(20),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, size: 32, color: color),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class AdminDashboard extends StatelessWidget {
   const AdminDashboard({super.key});
 
@@ -1387,7 +1331,7 @@ class AdminDashboard extends StatelessWidget {
                       const SizedBox(width: 20),
                       _buildStatCard('Active Users', '8,432', Icons.person, Colors.green),
                       const SizedBox(width: 20),
-                      _buildStatCard('Monthly Revenue', '\$42.5k', Icons.attach_money, Colors.orange),
+                      _buildStatCard('Monthly Revenue', '₹42.5k', Icons.currency_rupee, Colors.orange),
                     ],
                   ),
                   const SizedBox(height: 40),
@@ -1610,23 +1554,15 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> with Singl
           const SizedBox(height: 24),
           _AuthTextField(
             controller: _emailController,
-            label: 'EMAIL ADDRESS',
-            hint: 'name@flexpos.com',
-            icon: Icons.email_outlined,
-            keyboardType: TextInputType.emailAddress,
+            label: 'USERNAME / EMAIL',
+            hint: 'username',
+            icon: Icons.person_outline_rounded,
+            fixedSuffixText: '@flexpos.com',
+            keyboardType: TextInputType.text,
             maxLength: 30,
             enabled: !_isLoading,
             onSubmitted: (_) => _submit(),
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return '⚠ Please enter your email address';
-              }
-              final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
-              if (!emailRegex.hasMatch(value.trim())) {
-                return '⚠ Please enter a valid email address';
-              }
-              return null;
-            },
+            validator: _validateFlexPosUsername,
           ),
           const SizedBox(height: 24),
           Container(

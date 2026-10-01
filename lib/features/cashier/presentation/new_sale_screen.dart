@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/utils/currency_formatter.dart';
 import '../../../models/product_model.dart';
-import '../../../services/product_service.dart';
-import '../../../services/inventory_service.dart';
 import '../../../services/business_service.dart';
+import '../../../services/held_sale_service.dart';
+import '../../../services/inventory_service.dart';
+import '../../../services/product_service.dart';
 import '../../../services/sale_service.dart';
 
 class CartItemModel {
@@ -22,7 +24,12 @@ class CartItemModel {
 }
 
 class NewSaleScreen extends StatefulWidget {
-  const NewSaleScreen({super.key});
+  final List<CartItemModel>? initialCart;
+
+  const NewSaleScreen({
+    super.key,
+    this.initialCart,
+  });
 
   @override
   State<NewSaleScreen> createState() => _NewSaleScreenState();
@@ -33,6 +40,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
   final InventoryService _inventoryService = InventoryService();
   final BusinessService _businessService = BusinessService();
   final SaleService _saleService = SaleService();
+  final HeldSaleService _heldSaleService = HeldSaleService();
 
   bool _isLoading = true;
   String? _error;
@@ -58,9 +66,34 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialCart != null && widget.initialCart!.isNotEmpty) {
+      _cart.addAll(widget.initialCart!);
+    }
     _loadData();
     _searchController.addListener(_onSearchChanged);
     _discountController.addListener(_onDiscountChanged);
+  }
+
+  /// Sorts products:
+  /// 1. In-stock products first, sorted A -> Z by name
+  /// 2. Out-of-stock products second, sorted A -> Z by name
+  List<Product> _sortProducts(List<Product> products) {
+    final sorted = List<Product>.from(products);
+    sorted.sort((a, b) {
+      final stockA = _productStocks[a.id] ?? 0;
+      final stockB = _productStocks[b.id] ?? 0;
+      final hasStockA = stockA > 0;
+      final hasStockB = stockB > 0;
+
+      if (hasStockA && !hasStockB) {
+        return -1; // In-stock first
+      } else if (!hasStockA && hasStockB) {
+        return 1; // Out-of-stock second
+      } else {
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      }
+    });
+    return sorted;
   }
 
   Future<void> _loadData() async {
@@ -72,7 +105,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
     try {
       final bId = await _businessService.getBusinessId();
 
-      // Get branch (just take the first one for now)
+      // Get branch
       final branchResponse = await Supabase.instance.client
           .from('branches')
           .select('id')
@@ -100,7 +133,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
       setState(() {
         _allProducts = products;
         _productStocks = stockMap;
-        _filteredProducts = products;
+        _filteredProducts = _sortProducts(products);
         _isLoading = false;
       });
     } catch (e) {
@@ -114,12 +147,14 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
   void _onSearchChanged() {
     final query = _searchController.text.toLowerCase();
     setState(() {
-      _filteredProducts = _allProducts.where((p) {
+      final matches = _allProducts.where((p) {
         final nameMatch = p.name.toLowerCase().contains(query);
         final skuMatch = p.sku?.toLowerCase().contains(query) ?? false;
         final barcodeMatch = p.barcode?.toLowerCase().contains(query) ?? false;
         return nameMatch || skuMatch || barcodeMatch;
       }).toList();
+
+      _filteredProducts = _sortProducts(matches);
     });
   }
 
@@ -132,10 +167,70 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
     });
   }
 
+  Future<void> _holdCurrentSale() async {
+    if (_cart.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Hold this sale?'),
+        content: const Text('The current cart will be saved and cleared so you can start another sale.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.amber.shade800,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Hold Sale'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final heldSale = await _heldSaleService.holdSale(
+        branchId: _branchId,
+        cartItems: _cart,
+      );
+
+      setState(() {
+        _cart.clear();
+        _discountController.clear();
+        _discount = 0.0;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sale #${heldSale.referenceNumber} saved to Held Sales.'),
+            backgroundColor: const Color(0xFF003366),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to hold sale: ${e.toString()}'),
+            backgroundColor: Colors.red[800],
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _completeSale() async {
     if (_cart.isEmpty || _isCheckingOut || _branchId == null) return;
-    
-    // Validate discount not making total negative
+
     if (_subtotal - _discount < 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Discount cannot exceed subtotal')),
@@ -146,10 +241,12 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
     setState(() => _isCheckingOut = true);
 
     try {
-      final items = _cart.map((c) => CartItem(
-            productId: c.product.id,
-            quantity: c.quantity,
-          )).toList();
+      final items = _cart
+          .map((c) => CartItem(
+                productId: c.product.id,
+                quantity: c.quantity,
+              ))
+          .toList();
 
       final response = await _saleService.checkout(
         branchId: _branchId!,
@@ -166,25 +263,66 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             title: const Row(
               children: [
-                Icon(Icons.check_circle, color: Colors.green),
-                SizedBox(width: 8),
-                Text('Sale Complete'),
+                Icon(Icons.check_circle, color: Color(0xFF8DB600), size: 26),
+                SizedBox(width: 10),
+                Text('Sale Completed', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
               ],
             ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Invoice: #$saleId'),
-                Text('Payment: ${_paymentMethod.toUpperCase()}'),
-                Text('Total Paid: \$${(totalPaid as num).toStringAsFixed(2)}', 
-                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Invoice #:', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                          Text('#$saleId', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Payment Method:', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                          Text(_paymentMethod.toUpperCase(), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      const Divider(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Total Paid:', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                          Text(
+                            CurrencyFormatter.format(totalPaid as num),
+                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Color(0xFF003366)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
             actions: [
-              TextButton(
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF003366),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                ),
                 onPressed: () {
                   Navigator.pop(context); // close dialog
                   setState(() {
@@ -196,7 +334,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                   });
                   _loadData(); // reload stock from DB
                 },
-                child: const Text('New Sale'),
+                child: const Text('Start Next Sale', style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],
           ),
@@ -206,7 +344,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
       setState(() => _isCheckingOut = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red[800]),
         );
       }
     }
@@ -216,7 +354,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
     final maxStock = _productStocks[product.id] ?? 0;
 
     if (maxStock <= 0) {
-      return; // Handled by UI disabling, but just in case
+      return; // Handled by UI disabling
     }
 
     final existingIndex = _cart.indexWhere((c) => c.product.id == product.id);
@@ -263,150 +401,147 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
   Widget _buildProductGrid() {
     return Column(
       children: [
-        // Search Header
+        // Prominent Search Bar
         Container(
-          padding: const EdgeInsets.all(16.0),
-          decoration: BoxDecoration(
+          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
+          decoration: const BoxDecoration(
             color: Colors.white,
             border: Border(
-              bottom: BorderSide(color: Colors.grey.shade200, width: 1),
+              bottom: BorderSide(color: Color(0xFFE2E8F0), width: 1),
             ),
           ),
-          child: TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: 'Search products by name, SKU, or barcode...',
-              prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF003366)),
-              suffixIcon: _searchController.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.close_rounded, size: 20),
-                      onPressed: () {
-                        _searchController.clear();
-                      },
-                    )
-                  : null,
-              filled: true,
-              fillColor: const Color(0xFFF8FAFC),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFF003366), width: 1.5),
+          child: SizedBox(
+            height: 48,
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              decoration: InputDecoration(
+                hintText: 'Search products by name, SKU or barcode...',
+                hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF003366), size: 22),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF64748B)),
+                        onPressed: () {
+                          _searchController.clear();
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFF003366), width: 1.5),
+                ),
               ),
             ),
           ),
         ),
 
-        // Product Grid Content
+        // Product Catalog Grid Container
         Expanded(
-          child: _filteredProducts.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32.0),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF003366).withValues(alpha: 0.05),
-                            shape: BoxShape.circle,
+          child: Container(
+            color: const Color(0xFFF8FAFC),
+            child: _filteredProducts.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF003366).withValues(alpha: 0.06),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.inventory_2_outlined,
+                              size: 42,
+                              color: Color(0xFF003366),
+                            ),
                           ),
-                          child: const Icon(
-                            Icons.inventory_2_outlined,
-                            size: 48,
-                            color: Color(0xFF003366),
+                          const SizedBox(height: 14),
+                          Text(
+                            _searchController.text.isEmpty
+                                ? 'No products available'
+                                : 'No products match "${_searchController.text}"',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F172A),
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _searchController.text.isEmpty
-                              ? 'No products available'
-                              : 'No products match "${_searchController.text}"',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade800,
+                          const SizedBox(height: 6),
+                          Text(
+                            _searchController.text.isEmpty
+                                ? 'Add products to inventory to display them here.'
+                                : 'Try searching with a different product name, SKU, or barcode.',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _searchController.text.isEmpty
-                              ? 'Add products to inventory to see them here.'
-                              : 'Try searching with a different term or SKU.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade600,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final width = constraints.maxWidth;
-                    int crossAxisCount;
-                    if (width >= 1200) {
-                      crossAxisCount = 6;
-                    } else if (width >= 960) {
-                      crossAxisCount = 5;
-                    } else if (width >= 700) {
-                      crossAxisCount = 4;
-                    } else if (width >= 460) {
-                      crossAxisCount = 3;
-                    } else {
-                      crossAxisCount = 2;
-                    }
-
-                    const double padding = 32.0; // 16 left + 16 right
-                    const double spacing = 12.0;
-                    final double cardWidth =
-                        (width - padding - (crossAxisCount - 1) * spacing) /
-                            crossAxisCount;
-
-                    // Adapt card height based on width so name, price, and stock remain readable
-                    final double cardHeight =
-                        (cardWidth * 1.12).clamp(190.0, 225.0);
-
-                    return GridView.builder(
-                      padding: const EdgeInsets.all(16),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: crossAxisCount,
-                        crossAxisSpacing: spacing,
-                        mainAxisSpacing: spacing,
-                        mainAxisExtent: cardHeight,
+                        ],
                       ),
-                      itemCount: _filteredProducts.length,
-                      itemBuilder: (context, index) {
-                        final product = _filteredProducts[index];
-                        final stock = _productStocks[product.id] ?? 0;
-                        final hasStock = stock > 0;
-                        final cartIndex =
-                            _cart.indexWhere((c) => c.product.id == product.id);
-                        final inCartCount =
-                            cartIndex >= 0 ? _cart[cartIndex].quantity : 0;
+                    ),
+                  )
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final width = constraints.maxWidth;
+                      int crossAxisCount;
+                      if (width >= 1100) {
+                        crossAxisCount = 5;
+                      } else if (width >= 850) {
+                        crossAxisCount = 4;
+                      } else if (width >= 600) {
+                        crossAxisCount = 3;
+                      } else {
+                        crossAxisCount = 2;
+                      }
 
-                        return _buildProductCard(
-                          product: product,
-                          stock: stock,
-                          hasStock: hasStock,
-                          inCartCount: inCartCount,
-                          cardHeight: cardHeight,
-                        );
-                      },
-                    );
-                  },
-                ),
+                      const double spacing = 12.0;
+
+                      return GridView.builder(
+                        padding: const EdgeInsets.all(16),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          crossAxisSpacing: spacing,
+                          mainAxisSpacing: spacing,
+                          mainAxisExtent: 195.0,
+                        ),
+                        itemCount: _filteredProducts.length,
+                        itemBuilder: (context, index) {
+                          final product = _filteredProducts[index];
+                          final stock = _productStocks[product.id] ?? 0;
+                          final hasStock = stock > 0;
+                          final cartIndex =
+                              _cart.indexWhere((c) => c.product.id == product.id);
+                          final inCartCount =
+                              cartIndex >= 0 ? _cart[cartIndex].quantity : 0;
+
+                          return _buildProductCard(
+                            product: product,
+                            stock: stock,
+                            hasStock: hasStock,
+                            inCartCount: inCartCount,
+                          );
+                        },
+                      );
+                    },
+                  ),
+          ),
         ),
       ],
     );
@@ -417,254 +552,181 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
     required int stock,
     required bool hasStock,
     required int inCartCount,
-    required double cardHeight,
   }) {
     final bool isLowStock = hasStock && stock <= product.minStockAlert;
     final bool isSelected = inCartCount > 0;
-    final double imageHeight = (cardHeight * 0.38).clamp(68.0, 88.0);
 
-    return Card(
-      elevation: isSelected ? 2 : 1,
-      shadowColor: Colors.black.withValues(alpha: 0.08),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: isSelected
-              ? const Color(0xFF003366)
-              : Colors.grey.shade200,
-          width: isSelected ? 1.5 : 1.0,
-        ),
-      ),
-      clipBehavior: Clip.antiAlias,
+    return Material(
+      color: Colors.transparent,
       child: InkWell(
         onTap: hasStock ? () => _addToCart(product) : null,
-        child: Opacity(
-          opacity: hasStock ? 1.0 : 0.55,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Top Branded Placeholder / Image Area
-              Stack(
+        mouseCursor: hasStock ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
+        borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isSelected
+                  ? const Color(0xFF003366)
+                  : const Color(0xFFE2E8F0),
+              width: isSelected ? 1.5 : 1.0,
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x06000000),
+                blurRadius: 6,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Opacity(
+            opacity: hasStock ? 1.0 : 0.5,
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    height: imageHeight,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          const Color(0xFF003366).withValues(alpha: 0.08),
-                          const Color(0xFF003366).withValues(alpha: 0.02),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
-                    child: Center(
-                      child: Container(
-                        width: (imageHeight * 0.52).clamp(34.0, 44.0),
-                        height: (imageHeight * 0.52).clamp(34.0, 44.0),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF003366)
-                                  .withValues(alpha: 0.08),
-                              blurRadius: 6,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
+                          color: const Color(0xFF003366).withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: Center(
                           child: Text(
                             product.name.isNotEmpty
                                 ? product.name.characters.first.toUpperCase()
                                 : 'P',
-                            style: TextStyle(
-                              color: const Color(0xFF003366),
+                            style: const TextStyle(
+                              color: Color(0xFF003366),
                               fontWeight: FontWeight.bold,
-                              fontSize:
-                                  (imageHeight * 0.22).clamp(14.0, 18.0),
+                              fontSize: 16,
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-
-                  // Stock Badge (Top-Right)
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      constraints: const BoxConstraints(maxWidth: 100),
-                      decoration: BoxDecoration(
-                        color: !hasStock
-                            ? Colors.red.shade50
-                            : isLowStock
-                                ? Colors.orange.shade50
-                                : const Color(0xFF8DB600)
-                                    .withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: !hasStock
-                              ? Colors.red.shade200
-                              : isLowStock
-                                  ? Colors.orange.shade200
-                                  : const Color(0xFF8DB600)
-                                      .withValues(alpha: 0.4),
-                          width: 0.8,
-                        ),
-                      ),
-                      child: Text(
-                        hasStock ? '$stock ${product.unit}' : 'Out of stock',
-                        style: TextStyle(
-                          color: !hasStock
-                              ? Colors.red.shade700
-                              : isLowStock
-                                  ? Colors.orange.shade800
-                                  : const Color(0xFF003366),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 10,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-
-                  // In Cart Quantity Badge (Top-Left)
-                  if (isSelected)
-                    Positioned(
-                      top: 6,
-                      left: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF8DB600),
-                          borderRadius: BorderRadius.circular(6),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.15),
-                              blurRadius: 4,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: !hasStock
+                                  ? Colors.red.shade50
+                                  : isLowStock
+                                      ? Colors.orange.shade50
+                                      : const Color(0xFF8DB600).withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: !hasStock
+                                    ? Colors.red.shade200
+                                    : isLowStock
+                                        ? Colors.orange.shade200
+                                        : const Color(0xFF8DB600).withValues(alpha: 0.4),
+                                width: 0.8,
+                              ),
                             ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.shopping_cart_rounded,
-                              size: 10,
-                              color: Colors.white,
-                            ),
-                            const SizedBox(width: 3),
-                            Text(
-                              '$inCartCount',
-                              style: const TextStyle(
-                                color: Colors.white,
+                            child: Text(
+                              hasStock ? '$stock ${product.unit}' : 'Out of stock',
+                              style: TextStyle(
+                                color: !hasStock
+                                    ? Colors.red.shade700
+                                    : isLowStock
+                                        ? Colors.orange.shade800
+                                        : const Color(0xFF003366),
                                 fontWeight: FontWeight.bold,
                                 fontSize: 10,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-
-              // Product Info Area
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10.0, vertical: 8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            product.name,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                              color: Color(0xFF1E293B),
-                              height: 1.2,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
                           ),
-                          if (product.sku != null &&
-                              product.sku!.trim().isNotEmpty) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              'SKU: ${product.sku}',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey.shade600,
+                          if (isSelected) ...[
+                            const SizedBox(height: 3),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF8DB600),
+                                borderRadius: BorderRadius.circular(6),
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ] else if (product.barcode != null &&
-                              product.barcode!.trim().isNotEmpty) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              'BC: ${product.barcode}',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey.shade600,
+                              child: Text(
+                                'In Cart: $inCartCount',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
-                        ],
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              '\$${product.price.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                color: Color(0xFF003366),
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Container(
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              color: hasStock
-                                  ? const Color(0xFF003366)
-                                  : Colors.grey.shade300,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.add_rounded,
-                              size: 16,
-                              color: Colors.white,
-                            ),
-                          ),
                         ],
                       ),
                     ],
                   ),
-                ),
+                  const Spacer(),
+                  Text(
+                    product.name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: Color(0xFF0F172A),
+                      height: 1.2,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    (product.sku != null && product.sku!.trim().isNotEmpty)
+                        ? 'SKU: ${product.sku}'
+                        : (product.barcode != null && product.barcode!.trim().isNotEmpty)
+                            ? 'BC: ${product.barcode}'
+                            : 'Unit: ${product.unit}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF64748B),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          CurrencyFormatter.format(product.price),
+                          style: const TextStyle(
+                            color: Color(0xFF003366),
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: hasStock ? const Color(0xFF003366) : Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          Icons.add_rounded,
+                          size: 18,
+                          color: hasStock ? Colors.white : Colors.grey.shade500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -679,7 +741,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
           children: [
             // Current Sale Header
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               color: const Color(0xFF003366),
               child: Row(
                 children: [
@@ -689,14 +751,14 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                     'Current Sale',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 17,
+                      fontSize: 16,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.2,
                     ),
                   ),
                   const Spacer(),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(12),
@@ -710,7 +772,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
@@ -718,7 +780,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
               ),
             ),
 
-            // Cart Items List / Empty State
+            // Cart Items List / Polished Empty State
             Expanded(
               child: _cart.isEmpty
                   ? Center(
@@ -728,32 +790,42 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Container(
-                              padding: const EdgeInsets.all(20),
+                              padding: const EdgeInsets.all(16),
                               decoration: BoxDecoration(
                                 color: const Color(0xFF003366).withValues(alpha: 0.05),
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
                                 Icons.remove_shopping_cart_outlined,
-                                size: 44,
+                                size: 40,
                                 color: Color(0xFF003366),
                               ),
                             ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Cart is empty',
+                            const SizedBox(height: 14),
+                            const Text(
+                              'Current Sale',
                               style: TextStyle(
                                 fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Your cart is empty',
+                              style: TextStyle(
+                                fontSize: 14,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.grey.shade800,
+                                color: Color(0xFF64748B),
                               ),
                             ),
                             const SizedBox(height: 6),
-                            Text(
-                              'Tap products from the catalog to add them to this sale.',
+                            const Text(
+                              'Add products from the catalog\nto begin this sale.',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.grey.shade600,
+                                color: Color(0xFF94A3B8),
+                                height: 1.3,
                               ),
                               textAlign: TextAlign.center,
                             ),
@@ -762,110 +834,121 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                       ),
                     )
                   : ListView.separated(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      padding: const EdgeInsets.all(12),
                       itemCount: _cart.length,
-                      separatorBuilder: (context, index) => Divider(
-                        height: 1,
-                        thickness: 1,
-                        color: Colors.grey.shade100,
-                      ),
+                      separatorBuilder: (context, index) => const SizedBox(height: 8),
                       itemBuilder: (context, index) {
                         final item = _cart[index];
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 10),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x04000000),
+                                blurRadius: 4,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Product Info & Line Total
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Text(
                                       item.product.name,
                                       style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 14,
-                                        color: Color(0xFF1E293B),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                        color: Color(0xFF0F172A),
                                         height: 1.2,
                                       ),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                     ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      '\$${item.product.price.toStringAsFixed(2)} / ${item.product.unit}',
-                                      style: TextStyle(
-                                        color: Colors.grey.shade600,
-                                        fontSize: 12,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  InkWell(
+                                    onTap: () => _removeItem(index),
+                                    mouseCursor: SystemMouseCursors.click,
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(2.0),
+                                      child: Icon(
+                                        Icons.delete_outline_rounded,
+                                        color: Colors.red.shade400,
+                                        size: 18,
                                       ),
                                     ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Total: \$${item.lineTotal.toStringAsFixed(2)}',
-                                      style: const TextStyle(
-                                        color: Color(0xFF003366),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${CurrencyFormatter.format(item.product.price)} / ${item.product.unit}',
+                                style: const TextStyle(
+                                  color: Color(0xFF64748B),
+                                  fontSize: 11,
                                 ),
                               ),
-                              const SizedBox(width: 8),
-
-                              // Quantity Controls & Remove Action
+                              const SizedBox(height: 8),
                               Row(
-                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Container(
+                                    height: 32,
                                     decoration: BoxDecoration(
                                       color: const Color(0xFFF8FAFC),
-                                      borderRadius: BorderRadius.circular(8),
+                                      borderRadius: BorderRadius.circular(6),
                                       border: Border.all(
-                                          color: Colors.grey.shade300, width: 0.8),
+                                          color: const Color(0xFFE2E8F0), width: 1),
                                     ),
                                     child: Row(
                                       children: [
                                         InkWell(
                                           onTap: () => _updateQuantity(index, -1),
+                                          mouseCursor: SystemMouseCursors.click,
                                           borderRadius: const BorderRadius.only(
-                                            topLeft: Radius.circular(7),
-                                            bottomLeft: Radius.circular(7),
+                                            topLeft: Radius.circular(5),
+                                            bottomLeft: Radius.circular(5),
                                           ),
                                           child: const Padding(
-                                            padding: EdgeInsets.all(6.0),
+                                            padding: EdgeInsets.symmetric(horizontal: 8.0),
                                             child: Icon(
                                               Icons.remove_rounded,
-                                              size: 16,
+                                              size: 15,
                                               color: Color(0xFF003366),
                                             ),
                                           ),
                                         ),
                                         Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8.0),
+                                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
                                           child: Text(
                                             '${item.quantity}',
                                             style: const TextStyle(
                                               fontWeight: FontWeight.bold,
                                               fontSize: 13,
-                                              color: Color(0xFF1E293B),
+                                              color: Color(0xFF0F172A),
                                             ),
                                           ),
                                         ),
                                         InkWell(
                                           onTap: () => _updateQuantity(index, 1),
+                                          mouseCursor: SystemMouseCursors.click,
                                           borderRadius: const BorderRadius.only(
-                                            topRight: Radius.circular(7),
-                                            bottomRight: Radius.circular(7),
+                                            topRight: Radius.circular(5),
+                                            bottomRight: Radius.circular(5),
                                           ),
                                           child: const Padding(
-                                            padding: EdgeInsets.all(6.0),
+                                            padding: EdgeInsets.symmetric(horizontal: 8.0),
                                             child: Icon(
                                               Icons.add_rounded,
-                                              size: 16,
+                                              size: 15,
                                               color: Color(0xFF003366),
                                             ),
                                           ),
@@ -873,20 +956,13 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                                       ],
                                     ),
                                   ),
-                                  const SizedBox(width: 4),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.delete_outline_rounded,
-                                      color: Colors.red.shade400,
-                                      size: 20,
+                                  Text(
+                                    CurrencyFormatter.format(item.lineTotal),
+                                    style: const TextStyle(
+                                      color: Color(0xFF003366),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
                                     ),
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(
-                                      minWidth: 32,
-                                      minHeight: 32,
-                                    ),
-                                    tooltip: 'Remove item',
-                                    onPressed: () => _removeItem(index),
                                   ),
                                 ],
                               ),
@@ -897,7 +973,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                     ),
             ),
 
-            // Summary Section
+            // Checkout Summary Panel (Fixed at Bottom)
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -918,32 +994,32 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
+                      const Text(
                         'Subtotal',
                         style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade700,
+                          fontSize: 13,
+                          color: Color(0xFF64748B),
                           fontWeight: FontWeight.w500,
                         ),
                       ),
                       Text(
-                        '\$${_subtotal.toStringAsFixed(2)}',
+                        CurrencyFormatter.format(_subtotal),
                         style: const TextStyle(
-                          fontSize: 15,
+                          fontSize: 14,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
+                          color: Color(0xFF0F172A),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
-                      Text(
+                      const Text(
                         'Discount',
                         style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade700,
+                          fontSize: 13,
+                          color: Color(0xFF64748B),
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -956,11 +1032,11 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                           textAlign: TextAlign.right,
                           style: const TextStyle(
                             fontSize: 13,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.bold,
                           ),
                           decoration: InputDecoration(
                             isDense: true,
-                            prefixText: '\$',
+                            prefixText: CurrencyFormatter.symbol,
                             prefixStyle: const TextStyle(
                               color: Color(0xFF003366),
                               fontWeight: FontWeight.bold,
@@ -972,11 +1048,11 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                                 horizontal: 10, vertical: 8),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: Colors.grey.shade300),
+                              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: Colors.grey.shade300),
+                              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
@@ -988,14 +1064,14 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
-                      Text(
+                      const Text(
                         'Payment',
                         style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade700,
+                          fontSize: 13,
+                          color: Color(0xFF64748B),
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -1008,7 +1084,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                             DropdownMenuItem(value: 'cash', child: Text('Cash')),
                             DropdownMenuItem(value: 'card', child: Text('Card')),
                             DropdownMenuItem(value: 'upi', child: Text('UPI')),
-                            DropdownMenuItem(value: 'qr', child: Text('QR')),
+                            DropdownMenuItem(value: 'qr', child: Text('QR Code')),
                           ],
                           onChanged: (val) {
                             if (val != null) {
@@ -1017,8 +1093,8 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                           },
                           style: const TextStyle(
                             fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF1E293B),
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF0F172A),
                           ),
                           decoration: InputDecoration(
                             isDense: true,
@@ -1028,11 +1104,11 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                                 horizontal: 10, vertical: 8),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: Colors.grey.shade300),
+                              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: Colors.grey.shade300),
+                              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
@@ -1044,22 +1120,23 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                       ),
                     ],
                   ),
-                  const Divider(height: 24),
+                  const Divider(height: 20, color: Color(0xFFE2E8F0)),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.baseline,
                     textBaseline: TextBaseline.alphabetic,
                     children: [
                       const Text(
-                        'Total',
+                        'TOTAL',
                         style: TextStyle(
-                          fontSize: 18,
+                          fontSize: 15,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
+                          color: Color(0xFF0F172A),
+                          letterSpacing: 0.5,
                         ),
                       ),
                       Text(
-                        '\$${_total.toStringAsFixed(2)}',
+                        CurrencyFormatter.format(_total),
                         style: const TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.w900,
@@ -1068,41 +1145,84 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed:
-                          (_cart.isEmpty || _isCheckingOut) ? null : _completeSale,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF8DB600),
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: Colors.grey.shade200,
-                        disabledForegroundColor: Colors.grey.shade400,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      child: _isCheckingOut
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2.5,
+                  const SizedBox(height: 14),
+
+                  // Action Buttons: Hold Sale & Complete Sale
+                  Row(
+                    children: [
+                      // Hold Sale Button
+                      Expanded(
+                        flex: 2,
+                        child: SizedBox(
+                          height: 50,
+                          child: OutlinedButton.icon(
+                            onPressed: (_cart.isEmpty || _isCheckingOut)
+                                ? null
+                                : _holdCurrentSale,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.amber.shade900,
+                              side: BorderSide(
+                                color: _cart.isEmpty
+                                    ? Colors.grey.shade300
+                                    : Colors.amber.shade800,
                               ),
-                            )
-                          : const Text(
-                              'Complete Sale',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.3,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
                               ),
                             ),
-                    ),
+                            icon: const Icon(Icons.pause_circle_outline, size: 18),
+                            label: const Text(
+                              'Hold',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Complete Sale Button
+                      Expanded(
+                        flex: 3,
+                        child: SizedBox(
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: (_cart.isEmpty || _isCheckingOut)
+                                ? null
+                                : _completeSale,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF8DB600),
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor: Colors.grey.shade200,
+                              disabledForegroundColor: Colors.grey.shade400,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            child: _isCheckingOut
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2.5,
+                                    ),
+                                  )
+                                : const Text(
+                                    'COMPLETE SALE',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -1118,8 +1238,46 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
     final isDesktop = MediaQuery.of(context).size.width > 900;
 
     return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: const Text('New Sale'),
+        toolbarHeight: 52,
+        backgroundColor: const Color(0xFF003366),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 22),
+          onPressed: () => Navigator.of(context).pop(),
+          tooltip: 'Back to Dashboard',
+        ),
+        title: Row(
+          children: [
+            const Text(
+              'New Sale',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF8DB600).withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF8DB600), width: 0.8),
+              ),
+              child: const Text(
+                'POS Checkout Terminal',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
         actions: [
           if (!isDesktop)
             Builder(
@@ -1127,7 +1285,8 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                 icon: Badge(
                   label: Text('$_totalItems'),
                   isLabelVisible: _totalItems > 0,
-                  child: const Icon(Icons.shopping_cart),
+                  backgroundColor: const Color(0xFF8DB600),
+                  child: const Icon(Icons.shopping_cart, color: Colors.white),
                 ),
                 onPressed: () {
                   Scaffold.of(ctx).openEndDrawer();
@@ -1143,7 +1302,9 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
             )
           : null,
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF003366)),
+            )
           : _error != null
               ? Center(
                   child: Column(
@@ -1155,7 +1316,13 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                       Text(_error!, style: const TextStyle(color: Colors.red)),
                       const SizedBox(height: 16),
                       ElevatedButton(
-                          onPressed: _loadData, child: const Text('Retry')),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF003366),
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: _loadData,
+                        child: const Text('Retry'),
+                      ),
                     ],
                   ),
                 )
@@ -1163,8 +1330,8 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                   ? Row(
                       children: [
                         Expanded(child: _buildProductGrid()),
-                        const VerticalDivider(width: 1, thickness: 1),
-                        SizedBox(width: 400, child: _buildCartPanel()),
+                        const VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE2E8F0)),
+                        SizedBox(width: 380, child: _buildCartPanel()),
                       ],
                     )
                   : _buildProductGrid(),
