@@ -702,7 +702,7 @@ void main() {
       );
     });
 
-    test('failed recent held_sales query throws DashboardException', () async {
+    test('failed recent held_sales query does not crash getDashboardData', () async {
       configureMockClient(
         tableResponses: {
           'profiles': {
@@ -728,11 +728,7 @@ void main() {
 
       expect(
         () => service.getDashboardData(),
-        throwsA(isA<DashboardException>().having(
-          (e) => e.message,
-          'message',
-          contains('Failed to process recent activities'),
-        )),
+        returnsNormally,
       );
     });
 

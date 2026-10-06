@@ -55,7 +55,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   Future<void> _loadDashboardData() async {
     try {
       final data = await _dashboardService.getDashboardData();
-      final count = await _heldSaleService.getHeldSaleCount();
+      int count = 0;
+      try {
+        count = await _heldSaleService.getHeldSaleCount();
+      } catch (_) {}
 
       if (mounted) {
         setState(() {

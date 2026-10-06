@@ -106,15 +106,15 @@ class HeldSaleService {
   Future<List<HeldSaleModel>> getHeldSales() async {
     final c = client;
     if (!SupabaseConfig.isConfigured || c == null) {
-      throw Exception('Supabase is not configured.');
+      return [];
     }
 
     final user = c.auth.currentUser;
-    if (user == null) throw Exception('Not authenticated');
-
-    final bId = await businessService.getBusinessId();
+    if (user == null) return [];
 
     try {
+      final bId = await businessService.getBusinessId();
+
       final response = await c
           .from('held_sales')
           .select('*, held_sale_items(*)')
@@ -133,14 +133,19 @@ class HeldSaleService {
 
       return list;
     } catch (e) {
-      throw Exception('Failed to fetch held sales: $e');
+      // Return empty list if held_sales table is not present in the deployed database
+      return [];
     }
   }
 
   /// Gets total active held sale count for current cashier.
   Future<int> getHeldSaleCount() async {
-    final sales = await getHeldSales();
-    return sales.length;
+    try {
+      final sales = await getHeldSales();
+      return sales.length;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// Permanently deletes a held sale and its items without affecting inventory or creating sales/refunds.

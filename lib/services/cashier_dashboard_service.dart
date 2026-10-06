@@ -434,9 +434,30 @@ class CashierDashboardService {
         businessId: businessId,
         error: e,
       );
-      throw DashboardException(
-        message: 'Failed to process recent activities from database: ${e.toString()}',
-      );
+      // Fallback to recent activities from salesList only rather than failing the dashboard
+      recentActivities = salesList.take(5).map((s) {
+        final inv = s['invoice_number']?.toString() ?? 'SALE';
+        final total = (s['total'] is num)
+            ? (s['total'] as num).toDouble()
+            : double.tryParse(s['total']?.toString() ?? '0.0') ?? 0.0;
+        final payments = s['payments'] as List<dynamic>? ?? [];
+        String method = 'Cash';
+        if (payments.isNotEmpty) {
+          final mRaw = payments.first['payment_method']?.toString() ?? 'cash';
+          method = mRaw[0].toUpperCase() + mRaw.substring(1);
+        }
+        final createdAt = DateTime.parse(s['created_at'].toString()).toLocal();
+
+        return RecentActivityModel(
+          id: s['id'].toString(),
+          title: 'Completed Sale #$inv',
+          details: '₹${total.toStringAsFixed(2)} • $method Payment',
+          timestamp: createdAt,
+          icon: Icons.check_circle_outline,
+          iconColor: const Color(0xFF8DB600),
+          type: 'sale',
+        );
+      }).toList();
     }
 
     return CashierDashboardData(
@@ -493,68 +514,76 @@ class CashierDashboardService {
     }
 
     if (businessId.isNotEmpty) {
-      // 2. Recent Held Sales
-      final heldRes = await c
-          .from('held_sales')
-          .select('id, reference_number, created_at, held_sale_items(quantity)')
-          .eq('business_id', businessId)
-          .eq('employee_id', userId)
-          .eq('status', 'held')
-          .order('created_at', ascending: false)
-          .limit(5);
+      // 2. Recent Held Sales (safe against missing held_sales table)
+      try {
+        final heldRes = await c
+            .from('held_sales')
+            .select('id, reference_number, created_at, held_sale_items(quantity)')
+            .eq('business_id', businessId)
+            .eq('employee_id', userId)
+            .eq('status', 'held')
+            .order('created_at', ascending: false)
+            .limit(5);
 
-      for (var h in (heldRes as List<dynamic>? ?? [])) {
-        final ref = h['reference_number']?.toString() ?? 'HOLD';
-        final items = h['held_sale_items'] as List<dynamic>? ?? [];
-        int totalQty = 0;
-        for (var item in items) {
-          totalQty += (item['quantity'] as num? ?? 1).toInt();
-        }
-        final createdAt = DateTime.parse(h['created_at'].toString()).toLocal();
+        for (var h in (heldRes as List<dynamic>? ?? [])) {
+          final ref = h['reference_number']?.toString() ?? 'HOLD';
+          final items = h['held_sale_items'] as List<dynamic>? ?? [];
+          int totalQty = 0;
+          for (var item in items) {
+            totalQty += (item['quantity'] as num? ?? 1).toInt();
+          }
+          final createdAt = DateTime.parse(h['created_at'].toString()).toLocal();
 
-        activities.add(RecentActivityModel(
-          id: h['id'].toString(),
-          title: 'Held Sale #$ref',
-          details: '$totalQty items • Paused Cart',
-          timestamp: createdAt,
-          icon: Icons.pause_circle_outline,
-          iconColor: Colors.amber.shade800,
-          type: 'held_sale',
-        ));
-      }
-
-      // 3. Recent Shifts
-      final shiftRes = await c
-          .from('shifts')
-          .select('id, status, created_at, updated_at')
-          .eq('employee_id', userId)
-          .order('created_at', ascending: false)
-          .limit(3);
-
-      for (var sh in (shiftRes as List<dynamic>? ?? [])) {
-        final startTime = DateTime.parse(sh['created_at'].toString()).toLocal();
-        activities.add(RecentActivityModel(
-          id: '${sh['id']}_start',
-          title: 'Shift Session Started',
-          details: 'Shift session opened',
-          timestamp: startTime,
-          icon: Icons.access_time,
-          iconColor: const Color(0xFF003366),
-          type: 'shift',
-        ));
-
-        if (sh['status'] == 'ended' && sh['updated_at'] != null) {
-          final endTime = DateTime.parse(sh['updated_at'].toString()).toLocal();
           activities.add(RecentActivityModel(
-            id: '${sh['id']}_end',
-            title: 'Shift Session Ended',
-            details: 'Shift completed and closed',
-            timestamp: endTime,
-            icon: Icons.stop_circle_outlined,
-            iconColor: Colors.red[800]!,
-            type: 'shift',
+            id: h['id'].toString(),
+            title: 'Held Sale #$ref',
+            details: '$totalQty items • Paused Cart',
+            timestamp: createdAt,
+            icon: Icons.pause_circle_outline,
+            iconColor: Colors.amber.shade800,
+            type: 'held_sale',
           ));
         }
+      } catch (e) {
+        // Table public.held_sales does not exist in production schema; ignore gracefully
+      }
+
+      // 3. Recent Shifts (safe against query error)
+      try {
+        final shiftRes = await c
+            .from('shifts')
+            .select('id, status, created_at, updated_at')
+            .eq('employee_id', userId)
+            .order('created_at', ascending: false)
+            .limit(3);
+
+        for (var sh in (shiftRes as List<dynamic>? ?? [])) {
+          final startTime = DateTime.parse(sh['created_at'].toString()).toLocal();
+          activities.add(RecentActivityModel(
+            id: '${sh['id']}_start',
+            title: 'Shift Session Started',
+            details: 'Shift session opened',
+            timestamp: startTime,
+            icon: Icons.access_time,
+            iconColor: const Color(0xFF003366),
+            type: 'shift',
+          ));
+
+          if (sh['status'] == 'ended' && sh['updated_at'] != null) {
+            final endTime = DateTime.parse(sh['updated_at'].toString()).toLocal();
+            activities.add(RecentActivityModel(
+              id: '${sh['id']}_end',
+              title: 'Shift Session Ended',
+              details: 'Shift completed and closed',
+              timestamp: endTime,
+              icon: Icons.stop_circle_outlined,
+              iconColor: Colors.red[800]!,
+              type: 'shift',
+            ));
+          }
+        }
+      } catch (e) {
+        // Ignore shift query failure gracefully
       }
     }
 
@@ -636,12 +665,14 @@ class CashierDashboardService {
         callback: (payload) => onDataChanged(),
       );
 
-      channel.onPostgresChanges(
-        event: PostgresChangeEvent.all,
-        schema: 'public',
-        table: 'held_sales',
-        callback: (payload) => onDataChanged(),
-      );
+      try {
+        channel.onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'held_sales',
+          callback: (payload) => onDataChanged(),
+        );
+      } catch (_) {}
 
       channel.subscribe();
       return channel;
