@@ -15,9 +15,6 @@ class HeldSaleService {
   final ProductService? customProductService;
   final InventoryService? customInventoryService;
 
-  // In-memory fallback for local demo or offline environments
-  static final List<HeldSaleModel> _inMemoryHeldSales = [];
-
   HeldSaleService({
     SupabaseClient? client,
     BusinessService? businessService,
@@ -28,7 +25,16 @@ class HeldSaleService {
         customProductService = productService,
         customInventoryService = inventoryService;
 
-  SupabaseClient get client => customClient ?? Supabase.instance.client;
+  SupabaseClient? get client {
+    if (customClient != null) return customClient;
+    if (!SupabaseConfig.isConfigured) return null;
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
+
   BusinessService get businessService =>
       customBusinessService ?? BusinessService(client: customClient);
   ProductService get productService =>
@@ -46,45 +52,22 @@ class HeldSaleService {
       throw Exception('Cannot hold an empty cart');
     }
 
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) {
+      throw Exception('Supabase is not configured.');
+    }
+
+    final user = c.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+
     final now = DateTime.now();
     final refNumber = 'HOLD-${now.millisecondsSinceEpoch.toString().substring(7)}';
 
-    if (!SupabaseConfig.isConfigured) {
-      final saleId = 'demo-held-${now.millisecondsSinceEpoch}';
-      final items = cartItems
-          .map((c) => HeldSaleItemModel(
-                id: 'demo-item-${c.product.id}-${now.millisecondsSinceEpoch}',
-                heldSaleId: saleId,
-                productId: c.product.id,
-                productNameSnapshot: c.product.name,
-                skuSnapshot: c.product.sku,
-                quantity: c.quantity,
-                unitPrice: c.product.price,
-              ))
-          .toList();
-
-      final heldSale = HeldSaleModel(
-        id: saleId,
-        businessId: 'demo-business',
-        branchId: branchId,
-        employeeId: 'demo-employee',
-        referenceNumber: refNumber,
-        createdAt: now,
-        items: items,
-      );
-
-      _inMemoryHeldSales.add(heldSale);
-      return heldSale;
-    }
+    final bId = await businessService.getBusinessId();
 
     try {
-      final user = client.auth.currentUser;
-      if (user == null) throw Exception('Not authenticated');
-
-      final bId = await businessService.getBusinessId();
-
       // Insert held_sales row
-      final saleResponse = await client.from('held_sales').insert({
+      final saleResponse = await c.from('held_sales').insert({
         'business_id': bId,
         'branch_id': branchId,
         'employee_id': user.id,
@@ -96,68 +79,43 @@ class HeldSaleService {
 
       // Insert held_sale_items rows
       final itemsPayload = cartItems
-          .map((c) => {
+          .map((item) => {
                 'held_sale_id': heldSaleId,
-                'product_id': c.product.id,
-                'product_name_snapshot': c.product.name,
-                'sku_snapshot': c.product.sku,
-                'quantity': c.quantity,
-                'unit_price': c.product.price,
+                'product_id': item.product.id,
+                'product_name_snapshot': item.product.name,
+                'sku_snapshot': item.product.sku,
+                'quantity': item.quantity,
+                'unit_price': item.product.price,
               })
           .toList();
 
       final itemsResponse =
-          await client.from('held_sale_items').insert(itemsPayload).select();
+          await c.from('held_sale_items').insert(itemsPayload).select();
 
       final items = (itemsResponse as List<dynamic>)
           .map((json) => HeldSaleItemModel.fromMap(json as Map<String, dynamic>))
           .toList();
 
       return HeldSaleModel.fromMap(saleResponse, items: items);
-    } catch (_) {
-      // Fallback to in-memory store if database tables are in setup
-      final saleId = 'fallback-held-${now.millisecondsSinceEpoch}';
-      final items = cartItems
-          .map((c) => HeldSaleItemModel(
-                id: 'item-${c.product.id}',
-                heldSaleId: saleId,
-                productId: c.product.id,
-                productNameSnapshot: c.product.name,
-                skuSnapshot: c.product.sku,
-                quantity: c.quantity,
-                unitPrice: c.product.price,
-              ))
-          .toList();
-
-      final heldSale = HeldSaleModel(
-        id: saleId,
-        businessId: 'fallback-business',
-        branchId: branchId,
-        employeeId: 'fallback-employee',
-        referenceNumber: refNumber,
-        createdAt: now,
-        items: items,
-      );
-
-      _inMemoryHeldSales.add(heldSale);
-      return heldSale;
+    } catch (e) {
+      throw Exception('Failed to hold sale: $e');
     }
   }
 
   /// Fetches active held sales for the current cashier.
   Future<List<HeldSaleModel>> getHeldSales() async {
-    if (!SupabaseConfig.isConfigured) {
-      return List<HeldSaleModel>.from(
-          _inMemoryHeldSales.where((s) => s.status == 'held'));
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) {
+      throw Exception('Supabase is not configured.');
     }
 
+    final user = c.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+
+    final bId = await businessService.getBusinessId();
+
     try {
-      final user = client.auth.currentUser;
-      if (user == null) return [];
-
-      final bId = await businessService.getBusinessId();
-
-      final response = await client
+      final response = await c
           .from('held_sales')
           .select('*, held_sale_items(*)')
           .eq('business_id', bId)
@@ -174,9 +132,8 @@ class HeldSaleService {
       }).toList();
 
       return list;
-    } catch (_) {
-      return List<HeldSaleModel>.from(
-          _inMemoryHeldSales.where((s) => s.status == 'held'));
+    } catch (e) {
+      throw Exception('Failed to fetch held sales: $e');
     }
   }
 
@@ -188,27 +145,30 @@ class HeldSaleService {
 
   /// Permanently deletes a held sale and its items without affecting inventory or creating sales/refunds.
   Future<void> deleteHeldSale(String heldSaleId) async {
-    _inMemoryHeldSales.removeWhere((s) => s.id == heldSaleId);
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) {
+      throw Exception('Supabase is not configured.');
+    }
 
-    if (!SupabaseConfig.isConfigured) return;
+    final user = c.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
 
     try {
-      final user = client.auth.currentUser;
-      if (user == null) return;
-
-      await client
+      await c
           .from('held_sales')
           .delete()
           .eq('id', heldSaleId)
           .eq('employee_id', user.id);
-    } catch (_) {}
+    } catch (e) {
+      throw Exception('Failed to delete held sale: $e');
+    }
   }
 
   /// Resumes a held sale: verifies products exist and are active, loads items,
   /// deletes the held sale record from DB, and returns restored CartItemModel list.
   Future<List<CartItemModel>> resumeHeldSale(
       HeldSaleModel heldSale, Map<String, int> currentStockMap) async {
-    final activeProducts = await productService.getActiveProducts();
+    final activeProducts = await productService.getCashierCatalog();
     final activeProdMap = <String, Product>{};
     for (var p in activeProducts) {
       activeProdMap[p.id] = p;
@@ -218,17 +178,14 @@ class HeldSaleService {
 
     for (var item in heldSale.items) {
       final product = activeProdMap[item.productId];
-      if (product != null && product.active) {
-        final stock = currentStockMap[product.id] ?? product.minStockAlert + 10;
-        final qty = item.quantity.clamp(1, stock > 0 ? stock : 1);
-
+      if (product != null && product.active && product.isInStock) {
         // Preserve snapshot price
         final restoredProduct = product.copyWith(price: item.unitPrice);
 
         restoredCart.add(CartItemModel(
           product: restoredProduct,
-          quantity: qty,
-          maxStock: stock > 0 ? stock : 999,
+          quantity: item.quantity,
+          maxStock: 999999,
         ));
       }
     }

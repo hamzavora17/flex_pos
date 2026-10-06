@@ -32,7 +32,18 @@ class BusinessService {
     }
 
     try {
-      // 1. Check if user is an Admin owning a business
+      // 1. Attempt server-side RPC resolution via get_user_business_id()
+      try {
+        final rpcResult = await client.rpc('get_user_business_id');
+        if (rpcResult != null && rpcResult.toString().trim().isNotEmpty) {
+          _cachedBusinessId = rpcResult.toString().trim();
+          return _cachedBusinessId!;
+        }
+      } catch (_) {
+        // Fall back to direct query if RPC is unavailable in current context
+      }
+
+      // 2. Check if user is an Admin owning a business
       final ownedBusiness = await client
           .from('businesses')
           .select('id')
@@ -44,7 +55,7 @@ class BusinessService {
         return _cachedBusinessId!;
       }
 
-      // 2. Check if user is an Employee assigned to an active business
+      // 3. Check if user is an Employee assigned to an active business
       final employeeRecord = await client
           .from('employees')
           .select('business_id')
@@ -57,7 +68,7 @@ class BusinessService {
         return _cachedBusinessId!;
       }
 
-      throw const BusinessNotFoundException('No active business association found for current user.');
+      throw const BusinessNotFoundException('No active store business association found for current user.');
     } on FlexPOSException {
       rethrow;
     } catch (e) {

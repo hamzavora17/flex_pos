@@ -9,7 +9,15 @@ class ReturnService {
 
   ReturnService({SupabaseClient? client}) : customClient = client;
 
-  SupabaseClient get client => customClient ?? Supabase.instance.client;
+  SupabaseClient? get client {
+    if (customClient != null) return customClient;
+    if (!SupabaseConfig.isConfigured) return null;
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Processes product return following the inspection decision tree:
   /// - Is product damaged = YES -> Reject return with clear message ("Damaged goods rejected").
@@ -39,14 +47,9 @@ class ReturnService {
     // Step 3: Calculate Refund
     final totalRefund = validItems.fold(0.0, (sum, item) => sum + item.lineRefund);
 
-    if (!SupabaseConfig.isConfigured) {
-      // Demo / offline approval
-      return ReturnResultModel(
-        returnId: 'demo-ret-${DateTime.now().millisecondsSinceEpoch}',
-        refundAmount: totalRefund,
-        isApproved: true,
-        message: 'Return Approved & Processed! Inventory stock restored.',
-      );
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) {
+      throw Exception('Supabase is not configured.');
     }
 
     try {
@@ -63,7 +66,7 @@ class ReturnService {
             .toList(),
       };
 
-      final response = await client.rpc('process_return', params: {'payload': payload});
+      final response = await c.rpc('process_return', params: {'payload': payload});
       final resMap = Map<String, dynamic>.from(response as Map);
 
       return ReturnResultModel(
@@ -72,14 +75,8 @@ class ReturnService {
         isApproved: true,
         message: 'Return Approved! Inventory stock restored.',
       );
-    } catch (_) {
-      // Fallback
-      return ReturnResultModel(
-        returnId: 'ret-${DateTime.now().millisecondsSinceEpoch}',
-        refundAmount: totalRefund,
-        isApproved: true,
-        message: 'Return Approved! Inventory stock restored.',
-      );
+    } catch (e) {
+      throw Exception('Failed to process return on database: $e');
     }
   }
 }

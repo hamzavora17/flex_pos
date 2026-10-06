@@ -6,7 +6,11 @@ import 'core/config/supabase_config.dart';
 
 import 'features/cashier/presentation/new_sale_screen.dart';
 import 'features/cashier/presentation/employee_dashboard.dart';
+import 'features/manager/presentation/manager_dashboard.dart';
+import 'models/user_role.dart';
+import 'services/admin_user_service.dart';
 import 'services/cashier_dashboard_service.dart';
+import 'services/exceptions.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,6 +37,26 @@ class FlexPOSApp extends StatelessWidget {
       ),
       home: const SplashScreen(),
     );
+  }
+}
+
+Future<UserRole?> _resolveUserRole(String userId) async {
+  try {
+    final profileData = await Supabase.instance.client
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .maybeSingle();
+
+    if (profileData == null || profileData['role'] == null) {
+      return null;
+    }
+
+    final roleStr = profileData['role'].toString();
+    return UserRole.fromString(roleStr);
+  } catch (e) {
+    debugPrint('Error resolving user role for $userId: $e');
+    return null;
   }
 }
 
@@ -69,22 +93,22 @@ class _SplashScreenState extends State<SplashScreen> {
       final userId = session?.user.id;
       if (userId != null) {
         try {
-          final profileData = await Supabase.instance.client
-              .from('profiles')
-              .select('role')
-              .eq('id', userId)
-              .maybeSingle();
+          final userRole = await _resolveUserRole(userId);
 
-          final role = profileData?['role'] as String? ?? 'employee';
-
-          if (mounted) {
-            if (role == 'admin') {
+          if (mounted && userRole != null) {
+            if (userRole.isAdmin) {
               Navigator.of(context).pushAndRemoveUntil(
                 MaterialPageRoute(builder: (context) => const AdminDashboard()),
                 (route) => false,
               );
               return;
-            } else {
+            } else if (userRole.isManager) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const ManagerDashboard()),
+                (route) => false,
+              );
+              return;
+            } else if (userRole.isCashier) {
               Navigator.of(context).pushAndRemoveUntil(
                 MaterialPageRoute(builder: (context) => const EmployeeDashboard()),
                 (route) => false,
@@ -256,19 +280,11 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     setState(() => _isLoading = true);
 
     if (!SupabaseConfig.isConfigured) {
-      await Future.delayed(const Duration(milliseconds: 800));
       if (mounted) {
-        if (email == 'admin@flexpos.com') {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const AdminDashboard()),
-            (route) => false,
-          );
-        } else {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const EmployeeDashboard()),
-            (route) => false,
-          );
-        }
+        setState(() {
+          _isLoading = false;
+          _authError = '⚠ Supabase is not configured. Please check your application configuration.';
+        });
       }
       return;
     }
@@ -290,28 +306,37 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         return;
       }
 
-      // Fetch user profile from public.profiles using user.id
-      final profileData = await Supabase.instance.client
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .maybeSingle();
+      // Resolve user role exclusively from public.profiles.role
+      final userRole = await _resolveUserRole(user.id);
 
-      final role = profileData?['role'] as String? ?? 'employee';
+      if (userRole == null) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _authError = '⚠ Unable to resolve user profile role. Please contact your administrator.';
+          });
+        }
+        return;
+      }
 
-      if (role != 'admin') {
+      if (userRole.isCashier) {
         try {
           await CashierDashboardService().startShiftOnLogin(user.id);
         } catch (_) {}
       }
 
       if (mounted) {
-        if (role == 'admin') {
+        if (userRole.isAdmin) {
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (context) => const AdminDashboard()),
             (route) => false,
           );
-        } else {
+        } else if (userRole.isManager) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const ManagerDashboard()),
+            (route) => false,
+          );
+        } else if (userRole.isCashier) {
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (context) => const EmployeeDashboard()),
             (route) => false,
@@ -1302,12 +1327,12 @@ class AdminDashboard extends StatelessWidget {
                   ),
                   const Divider(color: Colors.white10, height: 1),
                   const SizedBox(height: 16),
-                  _buildSidebarItem(Icons.dashboard, 'Overview', true),
-                  _buildSidebarItem(Icons.business, 'Business Units', false),
-                  _buildSidebarItem(Icons.people, 'User Management', false),
-                  _buildSidebarItem(Icons.settings, 'System Settings', false),
+                  _buildSidebarItem(context, Icons.dashboard, 'Overview', true),
+                  _buildSidebarItem(context, Icons.business, 'Business Units', false),
+                  _buildSidebarItem(context, Icons.people, 'User Management', false, onTap: () => _showAssignRoleDialog(context)),
+                  _buildSidebarItem(context, Icons.settings, 'System Settings', false),
                   const Spacer(),
-                  _buildSidebarItem(Icons.help_outline, 'Support', false),
+                  _buildSidebarItem(context, Icons.help_outline, 'Support', false),
                   const SizedBox(height: 24),
                 ],
               ),
@@ -1318,12 +1343,33 @@ class AdminDashboard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Admin Dashboard',
-                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Admin Dashboard',
+                            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                          ),
+                          const SizedBox(height: 8),
+                          Text('System-wide overview and controls', style: TextStyle(color: Colors.grey[600])),
+                        ],
+                      ),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.manage_accounts, size: 18),
+                        label: const Text('Assign Manager / Role'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF003366),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onPressed: () => _showAssignRoleDialog(context),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text('System-wide overview and controls', style: TextStyle(color: Colors.grey[600])),
                   const SizedBox(height: 32),
                   Row(
                     children: [
@@ -1350,7 +1396,244 @@ class AdminDashboard extends StatelessWidget {
     );
   }
 
-  Widget _buildSidebarItem(IconData icon, String label, bool isSelected) {
+  Future<List<Map<String, String>>> _fetchAssignableUsers() async {
+    return await AdminUserService().getAssignableUsers();
+  }
+
+  void _showAssignRoleDialog(BuildContext context) {
+    UserRole selectedRole = UserRole.manager;
+    Map<String, String>? selectedUser;
+    bool isSubmitting = false;
+    String? errorMessage;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return FutureBuilder<List<Map<String, String>>>(
+          future: _fetchAssignableUsers(),
+          builder: (context, snapshot) {
+            return StatefulBuilder(
+              builder: (context, setDialogState) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const AlertDialog(
+                    content: Padding(
+                      padding: EdgeInsets.all(20.0),
+                      child: Row(
+                        children: [
+                          CircularProgressIndicator(),
+                          SizedBox(width: 16),
+                          Text('Loading eligible user profiles...'),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  final rawError = snapshot.error;
+                  final displayErr = rawError is FlexPOSException
+                      ? rawError.message
+                      : (rawError?.toString().replaceAll('Exception: ', '') ?? 'An unknown error occurred.');
+
+                  return AlertDialog(
+                    title: const Row(
+                      children: [
+                        Icon(Icons.error_outline_rounded, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('Error Loading Users'),
+                      ],
+                    ),
+                    content: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.red.shade200),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    displayErr,
+                                    style: const TextStyle(color: Colors.red, fontSize: 13, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Close'),
+                      ),
+                    ],
+                  );
+                }
+
+                final users = snapshot.data ?? [];
+                if (selectedUser == null && users.isNotEmpty) {
+                  selectedUser = users.first;
+                }
+
+                return AlertDialog(
+                  title: const Row(
+                    children: [
+                      Icon(Icons.manage_accounts, color: Color(0xFF003366)),
+                      SizedBox(width: 8),
+                      Text('Assign Store Staff Role'),
+                    ],
+                  ),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (errorMessage != null) ...[
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.red.shade200),
+                            ),
+                            child: Text(
+                              errorMessage!,
+                              style: const TextStyle(color: Colors.red, fontSize: 13),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        const Text('Select Target User Profile:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const SizedBox(height: 6),
+                        if (users.isEmpty)
+                          const Text(
+                            'No eligible non-admin profiles found.',
+                            style: TextStyle(color: Colors.grey, fontSize: 13),
+                          )
+                        else
+                          DropdownButtonFormField<Map<String, String>>(
+                            initialValue: selectedUser,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            ),
+                            items: users.map((user) {
+                              return DropdownMenuItem<Map<String, String>>(
+                                value: user,
+                                child: Text(
+                                  user['name'] ?? '',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (val) {
+                              if (val != null) {
+                                setDialogState(() => selectedUser = val);
+                              }
+                            },
+                          ),
+                        const SizedBox(height: 16),
+                        const Text('Assign Store Role:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const SizedBox(height: 6),
+                        DropdownButtonFormField<UserRole>(
+                          initialValue: selectedRole,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: UserRole.manager, child: Text('Manager')),
+                            DropdownMenuItem(value: UserRole.cashier, child: Text('Cashier / Employee')),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) {
+                              setDialogState(() => selectedRole = val);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: isSubmitting ? null : () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF003366),
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: (isSubmitting || selectedUser == null)
+                          ? null
+                          : () async {
+                              final targetUuid = selectedUser!['id'];
+                              if (targetUuid == null || targetUuid.isEmpty) {
+                                setDialogState(() {
+                                  errorMessage = 'Selected user has no valid Profile UUID.';
+                                });
+                                return;
+                              }
+
+                              setDialogState(() {
+                                isSubmitting = true;
+                                errorMessage = null;
+                              });
+
+                              try {
+                                await AdminUserService().assignUserRole(
+                                  targetUserId: targetUuid,
+                                  role: selectedRole,
+                                );
+
+                                if (context.mounted) {
+                                  Navigator.of(context).pop();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Successfully assigned ${selectedUser!['email']} as ${selectedRole.label}!'),
+                                      backgroundColor: Colors.green[800],
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                setDialogState(() {
+                                  isSubmitting = false;
+                                  errorMessage = e.toString().replaceAll('Exception: ', '');
+                                });
+                              }
+                            },
+                      child: isSubmitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Text('Assign Role'),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSidebarItem(BuildContext context, IconData icon, String label, bool isSelected, {VoidCallback? onTap}) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
@@ -1363,7 +1646,7 @@ class AdminDashboard extends StatelessWidget {
           label,
           style: TextStyle(color: isSelected ? Colors.white : Colors.white60, fontSize: 14, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
         ),
-        onTap: () {},
+        onTap: onTap,
       ),
     );
   }

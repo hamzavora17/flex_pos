@@ -5,7 +5,6 @@ import '../../../core/utils/currency_formatter.dart';
 import '../../../models/product_model.dart';
 import '../../../services/business_service.dart';
 import '../../../services/held_sale_service.dart';
-import '../../../services/inventory_service.dart';
 import '../../../services/product_service.dart';
 import '../../../services/sale_service.dart';
 
@@ -37,7 +36,6 @@ class NewSaleScreen extends StatefulWidget {
 
 class _NewSaleScreenState extends State<NewSaleScreen> {
   final ProductService _productService = ProductService();
-  final InventoryService _inventoryService = InventoryService();
   final BusinessService _businessService = BusinessService();
   final SaleService _saleService = SaleService();
   final HeldSaleService _heldSaleService = HeldSaleService();
@@ -47,7 +45,6 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
 
   String? _branchId;
   List<Product> _allProducts = [];
-  Map<String, int> _productStocks = {};
 
   List<Product> _filteredProducts = [];
   final TextEditingController _searchController = TextEditingController();
@@ -80,14 +77,9 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
   List<Product> _sortProducts(List<Product> products) {
     final sorted = List<Product>.from(products);
     sorted.sort((a, b) {
-      final stockA = _productStocks[a.id] ?? 0;
-      final stockB = _productStocks[b.id] ?? 0;
-      final hasStockA = stockA > 0;
-      final hasStockB = stockB > 0;
-
-      if (hasStockA && !hasStockB) {
+      if (a.isInStock && !b.isInStock) {
         return -1; // In-stock first
-      } else if (!hasStockA && hasStockB) {
+      } else if (!a.isInStock && b.isInStock) {
         return 1; // Out-of-stock second
       } else {
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
@@ -118,21 +110,11 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
 
       _branchId = branchResponse.first['id'].toString();
 
-      // Load products
-      final products = await _productService.getActiveProducts();
-
-      // Load inventory for all products to get stock
-      final inventoryItems = await _inventoryService.getInventory();
-      final stockMap = <String, int>{};
-      for (var item in inventoryItems) {
-        if (item.branchId == _branchId || item.branchId == null) {
-          stockMap[item.productId] = item.quantity;
-        }
-      }
+      // Load cashier products catalog from cashier_products view
+      final products = await _productService.getCashierCatalog();
 
       setState(() {
         _allProducts = products;
-        _productStocks = stockMap;
         _filteredProducts = _sortProducts(products);
         _isLoading = false;
       });
@@ -351,26 +333,21 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
   }
 
   void _addToCart(Product product) {
-    final maxStock = _productStocks[product.id] ?? 0;
-
-    if (maxStock <= 0) {
-      return; // Handled by UI disabling
+    if (!product.isInStock) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Item is currently out of stock')),
+      );
+      return;
     }
 
     final existingIndex = _cart.indexWhere((c) => c.product.id == product.id);
     if (existingIndex >= 0) {
-      if (_cart[existingIndex].quantity < maxStock) {
-        setState(() {
-          _cart[existingIndex].quantity++;
-        });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Cannot exceed available stock')),
-        );
-      }
+      setState(() {
+        _cart[existingIndex].quantity++;
+      });
     } else {
       setState(() {
-        _cart.add(CartItemModel(product: product, maxStock: maxStock));
+        _cart.add(CartItemModel(product: product, maxStock: 999999));
       });
     }
   }
@@ -382,12 +359,8 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
 
       if (newQty <= 0) {
         _cart.removeAt(index);
-      } else if (newQty <= item.maxStock) {
-        item.quantity = newQty;
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Cannot exceed available stock')),
-        );
+        item.quantity = newQty;
       }
     });
   }
@@ -524,8 +497,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                         itemCount: _filteredProducts.length,
                         itemBuilder: (context, index) {
                           final product = _filteredProducts[index];
-                          final stock = _productStocks[product.id] ?? 0;
-                          final hasStock = stock > 0;
+                          final hasStock = product.isInStock;
                           final cartIndex =
                               _cart.indexWhere((c) => c.product.id == product.id);
                           final inCartCount =
@@ -533,7 +505,6 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
 
                           return _buildProductCard(
                             product: product,
-                            stock: stock,
                             hasStock: hasStock,
                             inCartCount: inCartCount,
                           );
@@ -549,11 +520,9 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
 
   Widget _buildProductCard({
     required Product product,
-    required int stock,
     required bool hasStock,
     required int inCartCount,
   }) {
-    final bool isLowStock = hasStock && stock <= product.minStockAlert;
     final bool isSelected = inCartCount > 0;
 
     return Material(
@@ -618,27 +587,21 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                             decoration: BoxDecoration(
                               color: !hasStock
                                   ? Colors.red.shade50
-                                  : isLowStock
-                                      ? Colors.orange.shade50
-                                      : const Color(0xFF8DB600).withValues(alpha: 0.15),
+                                  : const Color(0xFF8DB600).withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(6),
                               border: Border.all(
                                 color: !hasStock
                                     ? Colors.red.shade200
-                                    : isLowStock
-                                        ? Colors.orange.shade200
-                                        : const Color(0xFF8DB600).withValues(alpha: 0.4),
+                                    : const Color(0xFF8DB600).withValues(alpha: 0.4),
                                 width: 0.8,
                               ),
                             ),
                             child: Text(
-                              hasStock ? '$stock ${product.unit}' : 'Out of stock',
+                              hasStock ? 'In Stock' : 'Out of stock',
                               style: TextStyle(
                                 color: !hasStock
                                     ? Colors.red.shade700
-                                    : isLowStock
-                                        ? Colors.orange.shade800
-                                        : const Color(0xFF003366),
+                                    : const Color(0xFF003366),
                                 fontWeight: FontWeight.bold,
                                 fontSize: 10,
                               ),

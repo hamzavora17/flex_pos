@@ -39,8 +39,8 @@ void main() {
     });
   });
 
-  group('HeldSaleService Tests', () {
-    test('holds a sale without deducting stock or creating payments', () async {
+  group('HeldSaleService Security Tests', () {
+    test('holdSale fails when unauthenticated or unconfigured without creating fake fallback records', () async {
       final heldSaleService = HeldSaleService();
 
       const product = Product(
@@ -54,18 +54,18 @@ void main() {
         CartItemModel(product: product, quantity: 3, maxStock: 20),
       ];
 
-      final heldSale = await heldSaleService.holdSale(branchId: 'br1', cartItems: cart);
+      expect(
+        () => heldSaleService.holdSale(branchId: 'br1', cartItems: cart),
+        throwsA(isA<Exception>()),
+      );
+    });
 
-      expect(heldSale.items.length, 1);
-      expect(heldSale.items.first.productNameSnapshot, 'Amul Milk 1L');
-      expect(heldSale.items.first.quantity, 3);
-      expect(heldSale.totalValue, 204.0);
-
-      final activeCount = await heldSaleService.getHeldSaleCount();
-      expect(activeCount, greaterThanOrEqualTo(1));
-
-      // Cleanup
-      await heldSaleService.deleteHeldSale(heldSale.id);
+    test('getHeldSales fails when unauthenticated or unconfigured', () async {
+      final heldSaleService = HeldSaleService();
+      expect(
+        () => heldSaleService.getHeldSales(),
+        throwsA(isA<Exception>()),
+      );
     });
   });
 }

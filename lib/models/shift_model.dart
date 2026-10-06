@@ -1,58 +1,64 @@
 /// Model representing a cashier work shift session.
 class ShiftModel {
   final String id;
-  final String businessId;
   final String employeeId;
-  final DateTime startTime;
-  final DateTime? endTime;
-  final double openingFloat;
+  final String? branchId;
+  final DateTime startTime; // Mapped from created_at
+  final DateTime? endTime; // Mapped from updated_at if status == 'ended'
+  final double openingFloat; // Mapped from expected_cash
   final String status; // 'active', 'ended', 'not_started'
   final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   const ShiftModel({
     required this.id,
-    required this.businessId,
     required this.employeeId,
+    this.branchId,
     required this.startTime,
     this.endTime,
     this.openingFloat = 0.0,
     required this.status,
     this.createdAt,
+    this.updatedAt,
   });
 
   bool get isActive => status == 'active';
 
   factory ShiftModel.fromMap(Map<String, dynamic> map) {
+    final createdAtDt = map['created_at'] != null
+        ? DateTime.parse(map['created_at'].toString()).toLocal()
+        : DateTime.now();
+
+    final statusStr = map['status']?.toString() ?? 'not_started';
+    DateTime? endedAtDt;
+    if (statusStr == 'ended' && map['updated_at'] != null) {
+      endedAtDt = DateTime.parse(map['updated_at'].toString()).toLocal();
+    }
+
     return ShiftModel(
       id: map['id']?.toString() ?? '',
-      businessId: map['business_id']?.toString() ?? '',
       employeeId: map['employee_id']?.toString() ?? '',
-      startTime: map['start_time'] != null
-          ? DateTime.parse(map['start_time'].toString()).toLocal()
-          : DateTime.now(),
-      endTime: map['end_time'] != null
-          ? DateTime.parse(map['end_time'].toString()).toLocal()
-          : null,
-      openingFloat: (map['opening_float'] is num)
-          ? (map['opening_float'] as num).toDouble()
-          : double.tryParse(map['opening_float']?.toString() ?? '0.0') ?? 0.0,
-      status: map['status']?.toString() ?? 'not_started',
-      createdAt: map['created_at'] != null
-          ? DateTime.parse(map['created_at'].toString()).toLocal()
+      branchId: map['branch_id']?.toString(),
+      startTime: createdAtDt,
+      endTime: endedAtDt,
+      openingFloat: (map['expected_cash'] is num)
+          ? (map['expected_cash'] as num).toDouble()
+          : double.tryParse(map['expected_cash']?.toString() ?? '0.0') ?? 0.0,
+      status: statusStr,
+      createdAt: createdAtDt,
+      updatedAt: map['updated_at'] != null
+          ? DateTime.parse(map['updated_at'].toString()).toLocal()
           : null,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
-      'business_id': businessId,
+      if (id.isNotEmpty) 'id': id,
       'employee_id': employeeId,
-      'start_time': startTime.toIso8601String(),
-      'end_time': endTime?.toIso8601String(),
-      'opening_float': openingFloat,
+      if (branchId != null) 'branch_id': branchId,
+      'expected_cash': openingFloat,
       'status': status,
-      if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
     };
   }
 }

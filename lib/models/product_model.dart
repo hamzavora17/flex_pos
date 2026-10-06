@@ -1,4 +1,4 @@
-/// Lightweight model representing a product item in FlexPOS.
+/// Model representing a product item in FlexPOS.
 class Product {
   final String id;
   final String businessId;
@@ -11,6 +11,8 @@ class Product {
   final bool active;
   final String unit;
   final int minStockAlert;
+  final int stockQuantity;
+  final bool isInStock;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -26,30 +28,50 @@ class Product {
     this.active = true,
     this.unit = 'pcs',
     this.minStockAlert = 5,
+    this.stockQuantity = 0,
+    this.isInStock = true,
     this.createdAt,
     this.updatedAt,
   });
 
   /// Factory constructor to create a [Product] from a Supabase row map.
   factory Product.fromMap(Map<String, dynamic> map) {
+    final qty = (map['stock_quantity'] is int)
+        ? map['stock_quantity'] as int
+        : (map['quantity'] is int)
+            ? map['quantity'] as int
+            : int.tryParse(map['stock_quantity']?.toString() ?? map['quantity']?.toString() ?? '0') ?? 0;
+
+    final inStockVal = map['is_in_stock'] != null
+        ? (map['is_in_stock'] as bool? ?? false)
+        : (qty > 0);
+
     return Product(
       id: map['id']?.toString() ?? '',
       businessId: map['business_id']?.toString() ?? '',
       categoryId: map['category_id']?.toString(),
-      name: map['name']?.toString() ?? '',
+      name: map['name']?.toString() ?? map['product_name']?.toString() ?? '',
       sku: map['sku']?.toString(),
       barcode: map['barcode']?.toString(),
       price: (map['price'] is num)
           ? (map['price'] as num).toDouble()
-          : double.tryParse(map['price']?.toString() ?? '0') ?? 0.0,
+          : (map['selling_price'] is num)
+              ? (map['selling_price'] as num).toDouble()
+              : double.tryParse(map['price']?.toString() ?? map['selling_price']?.toString() ?? '0') ?? 0.0,
       cost: (map['cost'] is num)
           ? (map['cost'] as num).toDouble()
-          : double.tryParse(map['cost']?.toString() ?? '0') ?? 0.0,
-      active: map['active'] as bool? ?? true,
+          : (map['purchase_price'] is num)
+              ? (map['purchase_price'] as num).toDouble()
+              : double.tryParse(map['cost']?.toString() ?? map['purchase_price']?.toString() ?? '0') ?? 0.0,
+      active: (map['active'] as bool?) ?? (map['is_active'] as bool?) ?? true,
       unit: map['unit']?.toString() ?? 'pcs',
       minStockAlert: (map['min_stock_alert'] is int)
           ? map['min_stock_alert'] as int
-          : int.tryParse(map['min_stock_alert']?.toString() ?? '5') ?? 5,
+          : (map['minimum_stock_level'] is int)
+              ? map['minimum_stock_level'] as int
+              : int.tryParse(map['min_stock_alert']?.toString() ?? map['minimum_stock_level']?.toString() ?? '5') ?? 5,
+      stockQuantity: qty,
+      isInStock: inStockVal,
       createdAt: map['created_at'] != null ? DateTime.tryParse(map['created_at'].toString()) : null,
       updatedAt: map['updated_at'] != null ? DateTime.tryParse(map['updated_at'].toString()) : null,
     );
@@ -62,13 +84,19 @@ class Product {
       'business_id': businessId,
       'category_id': categoryId,
       'name': name,
+      'product_name': name,
       'sku': (sku != null && sku!.trim().isNotEmpty) ? sku!.trim() : null,
       'barcode': (barcode != null && barcode!.trim().isNotEmpty) ? barcode!.trim() : null,
       'price': price,
       'cost': cost,
+      'selling_price': price,
+      'purchase_price': cost,
       'active': active,
+      'is_active': active,
       'unit': unit,
       'min_stock_alert': minStockAlert,
+      'minimum_stock_level': minStockAlert,
+      'stock_quantity': stockQuantity,
     };
   }
 
@@ -84,6 +112,8 @@ class Product {
     bool? active,
     String? unit,
     int? minStockAlert,
+    int? stockQuantity,
+    bool? isInStock,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -99,6 +129,8 @@ class Product {
       active: active ?? this.active,
       unit: unit ?? this.unit,
       minStockAlert: minStockAlert ?? this.minStockAlert,
+      stockQuantity: stockQuantity ?? this.stockQuantity,
+      isInStock: isInStock ?? this.isInStock,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

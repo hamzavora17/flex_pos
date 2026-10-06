@@ -68,10 +68,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         _setupRealtimeSubscription(data.userId);
       }
     } catch (e) {
+      debugPrint('Error loading dashboard data: $e');
       if (mounted) {
+        final detailMsg = e is DashboardException
+            ? e.message
+            : e.toString().replaceFirst('Exception: ', '').replaceFirst('DashboardException: ', '');
         setState(() {
           _isLoadingData = false;
-          _errorMessage = 'Failed to load dashboard data from Supabase. Please retry.';
+          _errorMessage = detailMsg;
         });
       }
     }

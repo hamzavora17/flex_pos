@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/config/supabase_config.dart';
 import '../models/product_model.dart';
 import 'business_service.dart';
 import 'exceptions.dart';
@@ -51,6 +52,76 @@ class ProductService {
       rethrow;
     } catch (e) {
       throw ProductException('Unable to load products', e);
+    }
+  }
+
+  /// Fetches product catalog for Managers and Admins with exact stock quantities aggregated from public.inventory.
+  Future<List<Product>> getManagerProducts({String? businessId}) async {
+    if (!SupabaseConfig.isConfigured) {
+      return getProducts(businessId: businessId);
+    }
+    try {
+      final bId = await businessService.getBusinessId();
+
+      final productsResponse = await client
+          .from('products')
+          .select()
+          .eq('business_id', bId)
+          .order('name', ascending: true);
+
+      final inventoryResponse = await client
+          .from('inventory')
+          .select('product_id, quantity')
+          .eq('business_id', bId);
+
+      final stockMap = <String, int>{};
+      for (var item in (inventoryResponse as List<dynamic>)) {
+        final pid = item['product_id']?.toString() ?? '';
+        final qty = (item['quantity'] is int)
+            ? item['quantity'] as int
+            : int.tryParse(item['quantity']?.toString() ?? '0') ?? 0;
+        if (pid.isNotEmpty) {
+          stockMap[pid] = (stockMap[pid] ?? 0) + qty;
+        }
+      }
+
+      return (productsResponse as List<dynamic>).map((json) {
+        final pMap = Map<String, dynamic>.from(json as Map);
+        final pid = pMap['id']?.toString() ?? '';
+        pMap['stock_quantity'] = stockMap[pid] ?? 0;
+        return Product.fromMap(pMap);
+      }).toList();
+    } on FlexPOSException {
+      rethrow;
+    } catch (e) {
+      throw ProductException('Unable to load manager products', e);
+    }
+  }
+
+  /// Fetches active product catalog for Cashiers using the restricted `cashier_products` view.
+  ///
+  /// Protects stock numbers, minimum stock thresholds, and purchase costs from Cashiers.
+  /// Does NOT fall back to public.products.
+  Future<List<Product>> getCashierCatalog({String? businessId}) async {
+    if (!SupabaseConfig.isConfigured) {
+      return getActiveProducts(businessId: businessId);
+    }
+    try {
+      final bId = await businessService.getBusinessId();
+      final response = await client
+          .from('cashier_products')
+          .select()
+          .eq('business_id', bId)
+          .eq('active', true)
+          .order('name', ascending: true);
+
+      return (response as List<dynamic>)
+          .map((json) => Product.fromMap(json as Map<String, dynamic>))
+          .toList();
+    } on FlexPOSException {
+      rethrow;
+    } catch (e) {
+      throw ProductException('Unable to load cashier catalog from cashier_products view', e);
     }
   }
 

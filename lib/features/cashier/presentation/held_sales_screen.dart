@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../models/held_sale_model.dart';
 import '../../../services/held_sale_service.dart';
-import '../../../services/inventory_service.dart';
 
 import 'new_sale_screen.dart';
 
@@ -16,7 +15,6 @@ class HeldSalesScreen extends StatefulWidget {
 
 class _HeldSalesScreenState extends State<HeldSalesScreen> {
   final HeldSaleService _heldSaleService = HeldSaleService();
-  final InventoryService _inventoryService = InventoryService();
 
   bool _isLoading = true;
   String? _error;
@@ -64,14 +62,7 @@ class _HeldSalesScreenState extends State<HeldSalesScreen> {
 
   Future<void> _resumeSale(HeldSaleModel heldSale) async {
     try {
-      // Get stock map for current inventory
-      final inventoryItems = await _inventoryService.getInventory();
-      final stockMap = <String, int>{};
-      for (var item in inventoryItems) {
-        stockMap[item.productId] = item.quantity;
-      }
-
-      final restoredCart = await _heldSaleService.resumeHeldSale(heldSale, stockMap);
+      final restoredCart = await _heldSaleService.resumeHeldSale(heldSale, const {});
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

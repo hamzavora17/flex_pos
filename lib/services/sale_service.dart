@@ -30,7 +30,15 @@ class SaleService {
 
   SaleService({SupabaseClient? client}) : customClient = client;
 
-  SupabaseClient get client => customClient ?? Supabase.instance.client;
+  SupabaseClient? get client {
+    if (customClient != null) return customClient;
+    if (!SupabaseConfig.isConfigured) return null;
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Submits a checkout transaction to the secure process_checkout Supabase RPC.
   /// 
@@ -61,6 +69,11 @@ class SaleService {
       throw SaleException('Unsupported payment method: $paymentMethod');
     }
 
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) {
+      throw const SaleException('Supabase is not configured.');
+    }
+
     try {
       // 2. Prepare payload
       final payload = {
@@ -72,7 +85,7 @@ class SaleService {
       };
 
       // 3. Invoke RPC
-      final response = await client.rpc(
+      final response = await c.rpc(
         'process_checkout',
         params: {'payload': payload},
       );
@@ -82,6 +95,7 @@ class SaleService {
       // Catch specific database exceptions (e.g., insufficient stock, not found)
       throw SaleException(e.message);
     } catch (e) {
+      if (e is FlexPOSException) rethrow;
       throw SaleException('An unexpected error occurred during checkout.', e);
     }
   }
@@ -91,17 +105,20 @@ class SaleService {
     String? searchQuery,
     String dateFilter = 'all',
   }) async {
-    if (!SupabaseConfig.isConfigured) {
-      return _getDemoSales(searchQuery: searchQuery, dateFilter: dateFilter);
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) {
+      throw const SaleException('Supabase is not configured.');
     }
 
     try {
-      final user = client.auth.currentUser;
-      if (user == null) return _getDemoSales(searchQuery: searchQuery, dateFilter: dateFilter);
+      final user = c.auth.currentUser;
+      if (user == null) {
+        throw const SaleException('No authenticated session found.');
+      }
 
-      final bId = await BusinessService(client: client).getBusinessId();
+      final bId = await BusinessService(client: c).getBusinessId();
 
-      final response = await client
+      final response = await c
           .from('sales')
           .select('*, sale_items(*), payments(*)')
           .eq('business_id', bId)
@@ -120,8 +137,53 @@ class SaleService {
       }).toList();
 
       return _filterCompletedSales(list, searchQuery: searchQuery, dateFilter: dateFilter);
-    } catch (_) {
-      return _getDemoSales(searchQuery: searchQuery, dateFilter: dateFilter);
+    } on FlexPOSException {
+      rethrow;
+    } catch (e) {
+      throw SaleException('Unable to load cashier completed sales', e);
+    }
+  }
+
+  /// Fetches all store sales history for Managers / Admins across all cashiers.
+  Future<List<CompletedSaleModel>> getStoreSales({
+    String? searchQuery,
+    String dateFilter = 'all',
+  }) async {
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) {
+      throw const SaleException('Supabase is not configured.');
+    }
+
+    try {
+      final user = c.auth.currentUser;
+      if (user == null) {
+        throw const SaleException('No authenticated session found.');
+      }
+
+      final bId = await BusinessService(client: c).getBusinessId();
+
+      final response = await c
+          .from('sales')
+          .select('*, sale_items(*), payments(*)')
+          .eq('business_id', bId)
+          .order('created_at', ascending: false);
+
+      final list = (response as List<dynamic>).map((json) {
+        final itemsRaw = json['sale_items'] as List<dynamic>? ?? [];
+        final items = itemsRaw.map((i) => SaleItem.fromMap(i as Map<String, dynamic>)).toList();
+        final paymentsRaw = json['payments'] as List<dynamic>? ?? [];
+        String pMethod = 'cash';
+        if (paymentsRaw.isNotEmpty) {
+          pMethod = paymentsRaw.first['payment_method']?.toString() ?? 'cash';
+        }
+        return CompletedSaleModel.fromMap(json as Map<String, dynamic>, items: items, paymentMethod: pMethod);
+      }).toList();
+
+      return _filterCompletedSales(list, searchQuery: searchQuery, dateFilter: dateFilter);
+    } on FlexPOSException {
+      rethrow;
+    } catch (e) {
+      throw SaleException('Unable to load store sales', e);
     }
   }
 
@@ -162,88 +224,5 @@ class SaleService {
 
       return true;
     }).toList();
-  }
-
-  List<CompletedSaleModel> _getDemoSales({String? searchQuery, String dateFilter = 'all'}) {
-    final now = DateTime.now();
-    final demoSales = [
-      CompletedSaleModel(
-        id: 's-1042',
-        businessId: 'b-1',
-        branchId: 'br-1',
-        employeeId: 'emp-1',
-        invoiceNumber: 'INV-20260930-A81F2C',
-        subtotal: 45.20,
-        discount: 0.0,
-        tax: 0.0,
-        total: 45.20,
-        status: 'completed',
-        paymentMethod: 'cash',
-        createdAt: now.subtract(const Duration(minutes: 2)),
-        items: const [
-          SaleItem(
-            id: 'si-1',
-            saleId: 's-1042',
-            productNameSnapshot: 'Amul Taaza Toned Milk 1L',
-            skuSnapshot: 'DAI002',
-            quantity: 1,
-            unitPrice: 45.20,
-            lineTotal: 45.20,
-          ),
-        ],
-      ),
-      CompletedSaleModel(
-        id: 's-1040',
-        businessId: 'b-1',
-        branchId: 'br-1',
-        employeeId: 'emp-1',
-        invoiceNumber: 'INV-20260930-A81F2B',
-        subtotal: 120.00,
-        discount: 7.50,
-        tax: 0.0,
-        total: 112.50,
-        status: 'completed',
-        paymentMethod: 'card',
-        createdAt: now.subtract(const Duration(minutes: 32)),
-        items: const [
-          SaleItem(
-            id: 'si-2',
-            saleId: 's-1040',
-            productNameSnapshot: 'Cadbury Dairy Milk 80g',
-            skuSnapshot: 'CNF001',
-            quantity: 2,
-            unitPrice: 60.00,
-            lineTotal: 120.00,
-          ),
-        ],
-      ),
-      CompletedSaleModel(
-        id: 's-1039',
-        businessId: 'b-1',
-        branchId: 'br-1',
-        employeeId: 'emp-1',
-        invoiceNumber: 'INV-20260930-A81F2A',
-        subtotal: 18.25,
-        discount: 0.0,
-        tax: 0.0,
-        total: 18.25,
-        status: 'completed',
-        paymentMethod: 'cash',
-        createdAt: now.subtract(const Duration(hours: 3)),
-        items: const [
-          SaleItem(
-            id: 'si-3',
-            saleId: 's-1039',
-            productNameSnapshot: 'Bisleri Mineral Water 1L',
-            skuSnapshot: 'BEV001',
-            quantity: 1,
-            unitPrice: 18.25,
-            lineTotal: 18.25,
-          ),
-        ],
-      ),
-    ];
-
-    return _filterCompletedSales(demoSales, searchQuery: searchQuery, dateFilter: dateFilter);
   }
 }

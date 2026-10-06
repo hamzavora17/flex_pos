@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flex_pos/models/completed_sale_model.dart';
 import 'package:flex_pos/models/sale_item_model.dart';
 import 'package:flex_pos/services/sale_service.dart';
+import 'package:flex_pos/services/exceptions.dart';
 
 void main() {
   group('CompletedSaleModel Tests', () {
@@ -50,25 +51,16 @@ void main() {
   });
 
   group('SaleService Previous Sales Tests', () {
-    test('returns cashier completed sales in newest-first order with search and date filters', () async {
+    test('throws SaleException when Supabase is unconfigured', () {
       final saleService = SaleService();
-
-      final sales = await saleService.getCompletedSalesForCashier();
-      expect(sales, isNotEmpty);
-
-      // Verify newest first
-      if (sales.length >= 2) {
-        expect(sales[0].createdAt.isAfter(sales[1].createdAt) || sales[0].createdAt.isAtSameMomentAs(sales[1].createdAt), isTrue);
-      }
-
-      // Test search filtering by invoice number
-      final searchInv = await saleService.getCompletedSalesForCashier(searchQuery: sales.first.invoiceNumber);
-      expect(searchInv, isNotEmpty);
-      expect(searchInv.first.invoiceNumber, sales.first.invoiceNumber);
-
-      // Test search filtering by product name
-      final searchProduct = await saleService.getCompletedSalesForCashier(searchQuery: 'Milk');
-      expect(searchProduct, isNotEmpty);
+      expect(
+        () => saleService.getCompletedSalesForCashier(),
+        throwsA(isA<SaleException>().having(
+          (e) => e.message,
+          'message',
+          contains('Supabase is not configured'),
+        )),
+      );
     });
   });
 }

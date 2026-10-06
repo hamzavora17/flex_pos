@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/utils/currency_formatter.dart';
 import '../../../models/category_model.dart';
 import '../../../models/product_model.dart';
-import '../../../services/business_service.dart';
 import '../../../services/category_service.dart';
-import '../../../services/inventory_service.dart';
 import '../../../services/product_service.dart';
 
 class SearchProductsScreen extends StatefulWidget {
@@ -18,16 +15,12 @@ class SearchProductsScreen extends StatefulWidget {
 
 class _SearchProductsScreenState extends State<SearchProductsScreen> {
   final ProductService _productService = ProductService();
-  final InventoryService _inventoryService = InventoryService();
   final CategoryService _categoryService = CategoryService();
-  final BusinessService _businessService = BusinessService();
 
   bool _isLoading = true;
   String? _error;
 
-  String? _branchId;
   List<Product> _allProducts = [];
-  Map<String, int> _productStocks = {};
   List<Category> _categories = [];
   Map<String, String> _categoryMap = {};
 
@@ -50,14 +43,9 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
   List<Product> _sortProducts(List<Product> products) {
     final sorted = List<Product>.from(products);
     sorted.sort((a, b) {
-      final stockA = _productStocks[a.id] ?? 0;
-      final stockB = _productStocks[b.id] ?? 0;
-      final hasStockA = stockA > 0;
-      final hasStockB = stockB > 0;
-
-      if (hasStockA && !hasStockB) {
+      if (a.isInStock && !b.isInStock) {
         return -1; // In-stock first
-      } else if (!hasStockA && hasStockB) {
+      } else if (!a.isInStock && b.isInStock) {
         return 1; // Out-of-stock second
       } else {
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
@@ -73,40 +61,9 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
     });
 
     try {
-      final bId = await _businessService.getBusinessId();
-
-      // Get branch
-      final branchResponse = await Supabase.instance.client
-          .from('branches')
-          .select('id')
-          .eq('business_id', bId)
-          .limit(1);
-
-      if (branchResponse.isNotEmpty) {
-        _branchId = branchResponse.first['id'].toString();
-      }
-
-      // Load products, inventory, categories in parallel
-      final productsFuture = _productService.getActiveProducts();
-      final inventoryFuture = _inventoryService.getInventory();
-      final categoriesFuture = _categoryService.getCategories();
-
-      final results = await Future.wait([
-        productsFuture,
-        inventoryFuture,
-        categoriesFuture,
-      ]);
-
-      final products = results[0] as List<Product>;
-      final inventoryItems = results[1] as dynamic;
-      final categories = results[2] as List<Category>;
-
-      final stockMap = <String, int>{};
-      for (var item in inventoryItems) {
-        if (item.branchId == _branchId || item.branchId == null) {
-          stockMap[item.productId] = item.quantity;
-        }
-      }
+      // Load products catalog and categories
+      final products = await _productService.getCashierCatalog();
+      final categories = await _categoryService.getCategories();
 
       final catMap = <String, String>{};
       for (var c in categories) {
@@ -115,7 +72,6 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
 
       setState(() {
         _allProducts = products;
-        _productStocks = stockMap;
         _categories = categories;
         _categoryMap = catMap;
         _isLoading = false;
@@ -134,9 +90,7 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
     final query = _searchController.text.trim().toLowerCase();
 
     final filtered = _allProducts.where((p) {
-      final stock = _productStocks[p.id] ?? 0;
-      final hasStock = stock > 0;
-      final isLowStock = hasStock && stock <= p.minStockAlert;
+      final hasStock = p.isInStock;
       final categoryName = _categoryMap[p.categoryId] ?? '';
 
       // Category Filter
@@ -146,7 +100,6 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
 
       // Stock Filter
       if (_selectedStockFilter == 'in_stock' && !hasStock) return false;
-      if (_selectedStockFilter == 'low_stock' && !isLowStock) return false;
       if (_selectedStockFilter == 'out_of_stock' && hasStock) return false;
 
       // Search Query Filter across Name, SKU, Barcode, Price, Category, Unit
@@ -170,9 +123,7 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
   }
 
   void _showProductDetailsDialog(Product product) {
-    final stock = _productStocks[product.id] ?? 0;
-    final hasStock = stock > 0;
-    final isLowStock = hasStock && stock <= product.minStockAlert;
+    final hasStock = product.isInStock;
     final categoryName = _categoryMap[product.categoryId] ?? 'Uncategorized';
 
     showDialog(
@@ -232,14 +183,10 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
                     const SizedBox(height: 8),
                     _buildDetailRow('Unit Type', product.unit),
                     const SizedBox(height: 8),
-                    _buildDetailRow('Current Stock', '$stock ${product.unit}'),
-                    const SizedBox(height: 8),
                     _buildDetailRow(
-                      'Stock Status',
-                      !hasStock ? 'OUT OF STOCK' : (isLowStock ? 'LOW STOCK' : 'IN STOCK'),
-                      badgeColor: !hasStock
-                          ? Colors.red[800]!
-                          : (isLowStock ? Colors.orange[800]! : const Color(0xFF8DB600)),
+                      'Availability Status',
+                      hasStock ? 'IN STOCK' : 'OUT OF STOCK',
+                      badgeColor: hasStock ? const Color(0xFF8DB600) : Colors.red[800]!,
                     ),
                   ],
                 ),
@@ -592,9 +539,7 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
           itemCount: _filteredProducts.length,
           itemBuilder: (context, index) {
             final product = _filteredProducts[index];
-            final stock = _productStocks[product.id] ?? 0;
-            final hasStock = stock > 0;
-            final isLowStock = hasStock && stock <= product.minStockAlert;
+            final hasStock = product.isInStock;
             final categoryName = _categoryMap[product.categoryId] ?? 'General';
 
             return Material(
@@ -647,29 +592,23 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
                                 decoration: BoxDecoration(
                                   color: !hasStock
                                       ? Colors.red.shade50
-                                      : isLowStock
-                                          ? Colors.orange.shade50
-                                          : const Color(0xFF8DB600).withValues(alpha: 0.15),
+                                      : const Color(0xFF8DB600).withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(6),
                                   border: Border.all(
                                     color: !hasStock
                                         ? Colors.red.shade200
-                                        : isLowStock
-                                            ? Colors.orange.shade200
-                                            : const Color(0xFF8DB600).withValues(alpha: 0.4),
+                                        : const Color(0xFF8DB600).withValues(alpha: 0.4),
                                     width: 0.8,
                                   ),
                                 ),
                                 child: Text(
-                                  !hasStock
-                                      ? 'OUT OF STOCK'
-                                      : (isLowStock ? 'LOW STOCK: $stock' : 'IN STOCK: $stock'),
+                                  hasStock ? 'IN STOCK' : 'OUT OF STOCK',
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
                                     color: !hasStock
                                         ? Colors.red.shade800
-                                        : (isLowStock ? Colors.orange.shade800 : const Color(0xFF003366)),
+                                        : const Color(0xFF003366),
                                   ),
                                 ),
                               ),
