@@ -4,9 +4,9 @@ class ShiftModel {
   final String employeeId;
   final String? branchId;
   final DateTime startTime; // Mapped from created_at
-  final DateTime? endTime; // Mapped from updated_at if status == 'ended'
+  final DateTime? endTime; // Mapped from updated_at if status == 'closed'
   final double openingFloat; // Mapped from expected_cash
-  final String status; // 'active', 'ended', 'not_started'
+  final String status; // 'open', 'closed'
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -22,16 +22,16 @@ class ShiftModel {
     this.updatedAt,
   });
 
-  bool get isActive => status == 'active';
+  bool get isActive => status == 'open';
 
   factory ShiftModel.fromMap(Map<String, dynamic> map) {
     final createdAtDt = map['created_at'] != null
         ? DateTime.parse(map['created_at'].toString()).toLocal()
         : DateTime.now();
 
-    final statusStr = map['status']?.toString() ?? 'not_started';
+    final statusStr = map['status']?.toString() ?? 'closed';
     DateTime? endedAtDt;
-    if (statusStr == 'ended' && map['updated_at'] != null) {
+    if (statusStr == 'closed' && map['updated_at'] != null) {
       endedAtDt = DateTime.parse(map['updated_at'].toString()).toLocal();
     }
 

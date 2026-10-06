@@ -79,4 +79,88 @@ class ReturnService {
       throw Exception('Failed to process return on database: $e');
     }
   }
+
+  /// Fetches a map of product_id -> total_returned_quantity for approved returns on a sale.
+  Future<Map<String, int>> getReturnedQuantitiesForSale(String saleId) async {
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) return {};
+
+    try {
+      final response = await c
+          .from('sale_returns')
+          .select('id, sale_return_items(product_id, quantity)')
+          .eq('sale_id', saleId)
+          .eq('status', 'approved');
+
+      final returnedMap = <String, int>{};
+      for (var ret in (response as List<dynamic>)) {
+        final items = ret['sale_return_items'] as List<dynamic>? ?? [];
+        for (var item in items) {
+          final pid = item['product_id']?.toString() ?? '';
+          final qty = (item['quantity'] as num? ?? 0).toInt();
+          if (pid.isNotEmpty) {
+            returnedMap[pid] = (returnedMap[pid] ?? 0) + qty;
+          }
+        }
+      }
+      return returnedMap;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Fetches historical return receipts for store returns.
+  Future<List<ReturnReceiptModel>> getReturnHistory() async {
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) return [];
+
+    try {
+      final response = await c
+          .from('sale_returns')
+          .select('*, sales(invoice_number), sale_return_items(*, products(name, sku))')
+          .order('created_at', ascending: false);
+
+      final receipts = <ReturnReceiptModel>[];
+      for (var ret in (response as List<dynamic>)) {
+        final rId = ret['id']?.toString() ?? '';
+        final salesData = ret['sales'] as Map<String, dynamic>?;
+        final invNo = salesData?['invoice_number']?.toString() ?? 'INV-HIST';
+        final dt = ret['created_at'] != null
+            ? DateTime.parse(ret['created_at'].toString()).toLocal()
+            : DateTime.now();
+        final refAmount = (ret['refund_amount'] as num?)?.toDouble() ?? 0.0;
+        final pMethod = ret['payment_method']?.toString() ?? 'cash';
+        final status = ret['status']?.toString() ?? 'approved';
+
+        final rawItems = ret['sale_return_items'] as List<dynamic>? ?? [];
+        final items = <ReturnItemSelection>[];
+        for (var i in rawItems) {
+          final pData = i['products'] as Map<String, dynamic>?;
+          final pName = pData?['name']?.toString() ?? 'Returned Product';
+          final sku = pData?['sku']?.toString();
+          items.add(ReturnItemSelection(
+            productId: i['product_id']?.toString() ?? '',
+            productName: pName,
+            sku: sku,
+            selectedQuantity: (i['quantity'] as num? ?? 1).toInt(),
+            maxQuantity: (i['quantity'] as num? ?? 1).toInt(),
+            unitPrice: (i['unit_price'] as num? ?? 0.0).toDouble(),
+          ));
+        }
+
+        receipts.add(ReturnReceiptModel(
+          returnId: rId,
+          originalInvoiceNumber: invNo,
+          returnDate: dt,
+          returnedItems: items,
+          refundAmount: refAmount,
+          paymentMethod: pMethod,
+          status: status,
+        ));
+      }
+      return receipts;
+    } catch (_) {
+      return [];
+    }
+  }
 }

@@ -177,6 +177,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     );
 
     if (confirm == true) {
+      try {
+        await _dashboardService.endActiveShiftOnLogout();
+      } catch (_) {}
       if (SupabaseConfig.isConfigured) {
         await Supabase.instance.client.auth.signOut();
       }
@@ -257,7 +260,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 ),
               ),
               const SizedBox(height: 14),
-              _buildProfileDetailRow(Icons.email_outlined, 'Email Address', email, isProtected: true),
+              _buildProfileDetailRow(Icons.email_outlined, 'Email Address (Read-Only)', email, isProtected: true),
               const SizedBox(height: 8),
               _buildProfileDetailRow(
                 Icons.access_time_outlined,
@@ -282,7 +285,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Email and session parameters are managed by System Administrator.',
+                        'Email address and system roles are protected and require an Administrator to change.',
                         style: TextStyle(fontSize: 11, color: Colors.amber.shade900),
                       ),
                     ),
@@ -293,11 +296,129 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           ),
         ),
         actions: [
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF003366),
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.edit, size: 16),
+            label: const Text('Edit Name'),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _showEditNameDialog(name);
+            },
+          ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('Close'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showEditNameDialog(String currentName) {
+    final controller = TextEditingController(text: currentName);
+    bool isSaving = false;
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: const Text('Edit Full Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          content: SizedBox(
+            width: 340,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Full Name', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: 'Enter full name',
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.lock_outline, size: 16, color: Colors.grey),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Email, role, and position are protected and cannot be changed here.',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF8DB600),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      final newName = controller.text.trim();
+                      if (newName.isEmpty) return;
+
+                      setDialogState(() => isSaving = true);
+                      final user = Supabase.instance.client.auth.currentUser;
+                      if (user != null) {
+                        try {
+                          await Supabase.instance.client
+                              .from('profiles')
+                              .update({'full_name': newName})
+                              .eq('id', user.id);
+
+                          if (mounted) {
+                            Navigator.of(dialogCtx).pop();
+                            await _loadDashboardData();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Profile name updated successfully.')),
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            setDialogState(() => isSaving = false);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Failed to update name: $e')),
+                            );
+                          }
+                        }
+                      }
+                    },
+              child: isSaving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Save Name'),
+            ),
+          ],
+        ),
       ),
     );
   }

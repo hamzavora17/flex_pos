@@ -1,5 +1,5 @@
 -- Migration: 006_returns_refunds_schema.sql
--- Description: Creates sale_returns, sale_return_items, and process_return RPC for handling product return inspections, refund calculations, and inventory restorations.
+-- Description: Creates sale_returns, sale_return_items, and hardened process_return RPC for handling product return inspections, refund calculations, and inventory restorations.
 
 -- 1. Create sale_returns table
 CREATE TABLE IF NOT EXISTS public.sale_returns (
@@ -68,7 +68,7 @@ CREATE POLICY "Cashiers insert return items" ON public.sale_return_items
         )
     );
 
--- 5. RPC to process return atomically
+-- 5. Hardened RPC to process return atomically
 CREATE OR REPLACE FUNCTION public.process_return(payload jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -84,11 +84,18 @@ DECLARE
     v_product_id UUID;
     v_quantity INT;
     v_unit_price NUMERIC;
+    v_orig_quantity INT;
+    v_already_returned_qty INT;
+    v_remaining_qty INT;
     v_item_total NUMERIC;
+    v_rows_updated INT;
 
     v_return_id UUID;
     v_result jsonb;
+
+    v_agg_rec RECORD;
 BEGIN
+    -- 1. Security & Authentication check
     v_user_id := auth.uid();
     IF v_user_id IS NULL THEN
         RAISE EXCEPTION 'Not authenticated';
@@ -99,59 +106,133 @@ BEGIN
         RAISE EXCEPTION 'Not authorized for any business';
     END IF;
 
+    -- 2. Extract & Validate sale_id
+    IF payload->>'sale_id' IS NULL OR payload->>'sale_id' = '' THEN
+        RAISE EXCEPTION 'sale_id is required';
+    END IF;
     v_sale_id := (payload->>'sale_id')::UUID;
-    v_is_damaged := (payload->>'is_damaged')::BOOLEAN;
+
+    -- Verify sale exists, belongs to authenticated user business, and is completed
+    SELECT branch_id INTO v_branch_id
+    FROM public.sales
+    WHERE id = v_sale_id
+      AND business_id = v_business_id
+      AND status = 'completed';
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Completed sale % not found or does not belong to your business', v_sale_id;
+    END IF;
+
+    -- 3. Check damage status
+    v_is_damaged := COALESCE((payload->>'is_damaged')::BOOLEAN, false);
     v_payment_method := COALESCE(payload->>'payment_method', 'cash');
 
     IF v_is_damaged THEN
-        RAISE EXCEPTION 'Return Rejected: Damaged items are not eligible for return or refund.';
+        RAISE EXCEPTION 'Return Rejected: Damaged or broken items are not eligible for return or refund.';
     END IF;
 
-    -- Get branch_id from sale
-    SELECT branch_id INTO v_branch_id FROM public.sales WHERE id = v_sale_id AND business_id = v_business_id;
+    IF payload->'items' IS NULL OR jsonb_array_length(payload->'items') = 0 THEN
+        RAISE EXCEPTION 'Return items list cannot be empty';
+    END IF;
 
-    -- Calculate total refund amount
-    FOR v_item IN SELECT * FROM jsonb_array_elements(payload->'items')
+    -- 4. Aggregate requested quantities per product_id ordered deterministically to prevent deadlocks & duplicate entry bypasses
+    FOR v_agg_rec IN
+        SELECT
+            (elem->>'product_id')::UUID AS product_id,
+            SUM((elem->>'quantity')::INT) AS total_requested_qty
+        FROM jsonb_array_elements(payload->'items') elem
+        GROUP BY (elem->>'product_id')::UUID
+        ORDER BY (elem->>'product_id')::UUID ASC
     LOOP
-        v_quantity := (v_item->>'quantity')::INT;
-        v_unit_price := (v_item->>'unit_price')::NUMERIC;
-        v_item_total := v_quantity * v_unit_price;
-        v_refund_amount := v_refund_amount + v_item_total;
+        v_product_id := v_agg_rec.product_id;
+        v_quantity := v_agg_rec.total_requested_qty;
+
+        IF v_quantity <= 0 THEN
+            RAISE EXCEPTION 'Total return quantity must be greater than zero for product %', v_product_id;
+        END IF;
+
+        -- CONCURRENT RETURN PROTECTION:
+        -- Lock the sale_items row FOR UPDATE in consistent ORDER BY product_id ASC to prevent deadlocks and serialize concurrent returns.
+        SELECT unit_price, quantity
+        INTO v_unit_price, v_orig_quantity
+        FROM public.sale_items
+        WHERE sale_id = v_sale_id AND product_id = v_product_id
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Product % was not part of original sale %', v_product_id, v_sale_id;
+        END IF;
+
+        -- Calculate cumulative previously returned quantity for this product on this sale
+        SELECT COALESCE(SUM(sri.quantity), 0)
+        INTO v_already_returned_qty
+        FROM public.sale_return_items sri
+        JOIN public.sale_returns sr ON sr.id = sri.sale_return_id
+        WHERE sr.sale_id = v_sale_id
+          AND sri.product_id = v_product_id
+          AND sr.status = 'approved';
+
+        v_remaining_qty := v_orig_quantity - v_already_returned_qty;
+
+        IF v_quantity > v_remaining_qty THEN
+            RAISE EXCEPTION 'Cannot return % items for product %. Max eligible return quantity is % (% originally purchased, % already returned).',
+                v_quantity, v_product_id, v_remaining_qty, v_orig_quantity, v_already_returned_qty;
+        END IF;
+
+        -- Accumulate refund total using authentic sale_items unit price (client price IGNORED)
+        v_refund_amount := v_refund_amount + (v_quantity * v_unit_price);
     END LOOP;
 
-    -- Insert sale_returns
+    -- 5. Insert sale_returns record
     INSERT INTO public.sale_returns (
         business_id, branch_id, sale_id, employee_id, refund_amount, payment_method, is_damaged, status
     ) VALUES (
         v_business_id, v_branch_id, v_sale_id, v_user_id, v_refund_amount, v_payment_method, false, 'approved'
     ) RETURNING id INTO v_return_id;
 
-    -- Insert items & restore inventory stock
-    FOR v_item IN SELECT * FROM jsonb_array_elements(payload->'items')
+    -- 6. Insert return items, restore inventory stock & write inventory logs for aggregated items in consistent order
+    FOR v_agg_rec IN
+        SELECT
+            (elem->>'product_id')::UUID AS product_id,
+            SUM((elem->>'quantity')::INT) AS total_requested_qty
+        FROM jsonb_array_elements(payload->'items') elem
+        GROUP BY (elem->>'product_id')::UUID
+        ORDER BY (elem->>'product_id')::UUID ASC
     LOOP
-        v_product_id := (v_item->>'product_id')::UUID;
-        v_quantity := (v_item->>'quantity')::INT;
-        v_unit_price := (v_item->>'unit_price')::NUMERIC;
+        v_product_id := v_agg_rec.product_id;
+        v_quantity := v_agg_rec.total_requested_qty;
+
+        -- Re-fetch authentic unit price
+        SELECT unit_price INTO v_unit_price
+        FROM public.sale_items
+        WHERE sale_id = v_sale_id AND product_id = v_product_id;
+
         v_item_total := v_quantity * v_unit_price;
 
+        -- Insert return item
         INSERT INTO public.sale_return_items (
             sale_return_id, product_id, quantity, unit_price, refund_total
         ) VALUES (
             v_return_id, v_product_id, v_quantity, v_unit_price, v_item_total
         );
 
-        -- Restore inventory stock (+v_quantity)
-        UPDATE public.products
-        SET stock_quantity = stock_quantity + v_quantity,
+        -- Restore inventory quantity in public.inventory (+v_quantity)
+        UPDATE public.inventory
+        SET quantity = quantity + v_quantity,
             updated_at = NOW()
-        WHERE id = v_product_id AND business_id = v_business_id;
+        WHERE product_id = v_product_id
+          AND business_id = v_business_id
+          AND (v_branch_id IS NULL OR branch_id = v_branch_id);
 
-        -- Record inventory log
-        INSERT INTO public.inventory (
-            business_id, product_id, quantity, movement_type, reference
-        ) VALUES (
-            v_business_id, v_product_id, v_quantity, 'return', 'RETURN-' || v_return_id
-        );
+        -- VERIFY INVENTORY RESTORATION WAS EXECUTED
+        GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
+        IF v_rows_updated = 0 THEN
+            RAISE EXCEPTION 'Inventory record not found for product % at this branch. Return operation aborted.', v_product_id;
+        END IF;
+
+        -- Record movement in inventory_logs
+        INSERT INTO public.inventory_logs (business_id, product_id, user_id, quantity_change, movement_type, notes)
+        VALUES (v_business_id, v_product_id, v_user_id, v_quantity, 'return', 'Return for sale: ' || v_sale_id);
     END LOOP;
 
     v_result := jsonb_build_object(
@@ -163,3 +244,5 @@ BEGIN
     RETURN v_result;
 END;
 $$;
+
+GRANT EXECUTE ON FUNCTION public.process_return(jsonb) TO authenticated;

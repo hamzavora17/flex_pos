@@ -145,13 +145,13 @@ class CashierDashboardService {
       );
     }
 
-    // 1. Check if an active shift already exists for this user
+    // 1. Check if an active open shift already exists for this user
     try {
       final existingRes = await c
           .from('shifts')
           .select('*')
           .eq('employee_id', userId)
-          .eq('status', 'active')
+          .eq('status', 'open')
           .order('created_at', ascending: false)
           .limit(1)
           .maybeSingle();
@@ -160,19 +160,47 @@ class CashierDashboardService {
         return ShiftModel.fromMap(existingRes);
       }
 
-      // 2. Insert new active shift using real schema
-      final shiftRes = await c.from('shifts').insert({
-        'employee_id': userId,
-        'expected_cash': openingFloat,
-        'status': 'active',
-      }).select().single();
+      // Resolve branch_id from branches table for the business
+      String? branchId;
+      try {
+        final branchRes = await c
+            .from('branches')
+            .select('id')
+            .eq('business_id', businessId)
+            .limit(1)
+            .maybeSingle();
 
-      final shift = ShiftModel.fromMap(shiftRes);
+        if (branchRes != null) {
+          branchId = branchRes['id']?.toString();
+        }
+      } catch (_) {}
 
-      // Attendance table does not exist in production schema.
-      // Skipping attendance recording to prevent crashes.
+      // 2. Insert new open shift using real schema
+      try {
+        final shiftRes = await c.from('shifts').insert({
+          'employee_id': userId,
+          if (branchId != null) 'branch_id': branchId,
+          'expected_cash': openingFloat,
+          'status': 'open',
+        }).select().single();
 
-      return shift;
+        return ShiftModel.fromMap(shiftRes);
+      } catch (_) {
+        // Safe reuse in case of race condition or unique active shift constraint
+        final retryRes = await c
+            .from('shifts')
+            .select('*')
+            .eq('employee_id', userId)
+            .eq('status', 'open')
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+
+        if (retryRes != null) {
+          return ShiftModel.fromMap(retryRes);
+        }
+        rethrow;
+      }
     } catch (e) {
       _logErrorDetails(
         step: 'startShiftOnLogin',
@@ -381,7 +409,7 @@ class CashierDashboardService {
     }
 
     // ------------------------------------------------------------------------
-    // STEP 4: ACTIVE SHIFT QUERY
+    // STEP 4: ACTIVE SHIFT QUERY / AUTOMATIC SHIFT CREATION
     // ------------------------------------------------------------------------
     ShiftModel? activeShift;
     try {
@@ -389,13 +417,16 @@ class CashierDashboardService {
           .from('shifts')
           .select('*')
           .eq('employee_id', userId)
-          .eq('status', 'active')
+          .eq('status', 'open')
           .order('created_at', ascending: false)
           .limit(1)
           .maybeSingle();
 
       if (shiftRes != null) {
         activeShift = ShiftModel.fromMap(shiftRes);
+      } else {
+        // Automatically start an active shift if cashier does not already have an active shift
+        activeShift = await startShiftOnLogin(userId);
       }
     } catch (e) {
       _logErrorDetails(
@@ -569,7 +600,7 @@ class CashierDashboardService {
             type: 'shift',
           ));
 
-          if (sh['status'] == 'ended' && sh['updated_at'] != null) {
+          if (sh['status'] == 'closed' && sh['updated_at'] != null) {
             final endTime = DateTime.parse(sh['updated_at'].toString()).toLocal();
             activities.add(RecentActivityModel(
               id: '${sh['id']}_end',
@@ -616,7 +647,7 @@ class CashierDashboardService {
 
     try {
       await c.from('shifts').update({
-        'status': 'ended',
+        'status': 'closed',
         // updated_at is handled by DB or just tracking by created_at/updated_at
       }).eq('id', shiftId);
     } catch (e) {
@@ -630,6 +661,34 @@ class CashierDashboardService {
       throw DashboardException(
         message: 'Failed to end shift on database: ${e.toString()}',
       );
+    }
+  }
+
+  /// Ends any active shift for the current logged-in user when logging out.
+  Future<void> endActiveShiftOnLogout() async {
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) return;
+
+    final user = c.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final activeShift = await c
+          .from('shifts')
+          .select('id')
+          .eq('employee_id', user.id)
+          .eq('status', 'open')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (activeShift != null) {
+        await c.from('shifts').update({
+          'status': 'closed',
+        }).eq('id', activeShift['id']);
+      }
+    } catch (e) {
+      debugPrint('Error ending active shift on logout: $e');
     }
   }
 
