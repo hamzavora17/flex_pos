@@ -6,6 +6,7 @@ import '../../../core/utils/currency_formatter.dart';
 import '../../../main.dart';
 import '../../../models/completed_sale_model.dart';
 import '../../../models/product_model.dart';
+import '../../../services/cashier_dashboard_service.dart';
 import '../../../services/product_service.dart';
 import '../../../services/sale_service.dart';
 import 'manager_products_screen.dart';
@@ -21,9 +22,12 @@ class ManagerDashboard extends StatefulWidget {
   State<ManagerDashboard> createState() => _ManagerDashboardState();
 }
 
-class _ManagerDashboardState extends State<ManagerDashboard> {
+class _ManagerDashboardState extends State<ManagerDashboard> with WidgetsBindingObserver {
   final ProductService _productService = ProductService();
   final SaleService _saleService = SaleService();
+  final CashierDashboardService _dashboardService = CashierDashboardService();
+
+  RealtimeChannel? _realtimeChannel;
 
   int _selectedIndex = 0;
   String _displayName = 'Manager';
@@ -43,12 +47,44 @@ class _ManagerDashboardState extends State<ManagerDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadManagerProfile();
     _loadOverviewData();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _loadOverviewData(silent: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (_realtimeChannel != null) {
+      try {
+        Supabase.instance.client.removeChannel(_realtimeChannel!);
+      } catch (_) {}
+    }
+    super.dispose();
+  }
+
   static String _formatWorkDate(DateTime dt) {
-    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+    final local = dt.toLocal();
+    return '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  }
+
+  void _setupRealtimeSubscription(String userId) {
+    if (_realtimeChannel != null || userId.isEmpty) return;
+    _realtimeChannel = _dashboardService.subscribeToDashboardChanges(
+      userId: userId,
+      onDataChanged: () {
+        if (mounted) {
+          _loadOverviewData(silent: true);
+        }
+      },
+    );
   }
 
   Future<void> _loadManagerProfile() async {
@@ -93,22 +129,29 @@ class _ManagerDashboardState extends State<ManagerDashboard> {
     }
   }
 
-  Future<void> _loadOverviewData() async {
+  Future<void> _loadOverviewData({bool silent = false}) async {
     if (!mounted) return;
-    setState(() {
-      _isOverviewLoading = true;
-      _overviewError = null;
-    });
+    if (!silent) {
+      setState(() {
+        _isOverviewLoading = true;
+        _overviewError = null;
+      });
+    }
 
     try {
       final products = await _productService.getManagerProducts();
       final sales = await _saleService.getStoreSales();
 
-      final todayStr = _formatWorkDate(DateTime.now().toLocal());
-      final todaySalesList = sales.where((s) => _formatWorkDate(s.createdAt) == todayStr).toList();
+      final todayStr = _formatWorkDate(DateTime.now());
+      final todaySalesList = sales.where((s) {
+        final isCompleted = s.status.toLowerCase() == 'completed';
+        final isToday = _formatWorkDate(s.createdAt) == todayStr;
+        return isCompleted && isToday;
+      }).toList();
 
       final todaySalesSum = todaySalesList.fold(0.0, (sum, s) => sum + s.total);
       final lowStock = products.where((p) => p.stockQuantity <= p.minStockAlert).toList();
+      final completedSalesList = sales.where((s) => s.status.toLowerCase() == 'completed').toList();
 
       if (mounted) {
         setState(() {
@@ -116,15 +159,24 @@ class _ManagerDashboardState extends State<ManagerDashboard> {
           _todayBills = todaySalesList.length;
           _totalProductsCount = products.length;
           _lowStockCount = lowStock.length;
-          _recentSales = sales.take(5).toList();
+          _recentSales = completedSalesList.take(5).toList();
           _lowStockProducts = lowStock.take(5).toList();
           _isOverviewLoading = false;
+          _overviewError = null;
         });
+
+        // Set up Realtime listener for live store updates
+        final user = Supabase.instance.client.auth.currentUser;
+        if (user != null) {
+          _setupRealtimeSubscription(user.id);
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _overviewError = e.toString();
+          if (!silent) {
+            _overviewError = e.toString();
+          }
           _isOverviewLoading = false;
         });
       }
