@@ -61,23 +61,29 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
           returnedQtyMap[sale.id] = map;
         }
 
-        setState(() {
-          _sales = sales;
-          _saleReturnedQtyMap = returnedQtyMap;
-          _isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _sales = sales;
+            _saleReturnedQtyMap = returnedQtyMap;
+            _isLoading = false;
+          });
+        }
       } else {
         final history = await _returnService.getReturnHistory();
+        if (mounted) {
+          setState(() {
+            _returnHistory = history;
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
         setState(() {
-          _returnHistory = history;
+          _error = e.toString();
           _isLoading = false;
         });
       }
-    } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
     }
   }
 
@@ -86,9 +92,15 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
       final sales = await _saleService.getCompletedSalesForCashier(
         searchQuery: _searchController.text,
       );
+      final returnedQtyMap = <String, Map<String, int>>{};
+      for (var sale in sales) {
+        final map = await _returnService.getReturnedQuantitiesForSale(sale.id);
+        returnedQtyMap[sale.id] = map;
+      }
       if (mounted) {
         setState(() {
           _sales = sales;
+          _saleReturnedQtyMap = returnedQtyMap;
         });
       }
     }
@@ -114,25 +126,27 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
     final returnedMap = await _returnService.getReturnedQuantitiesForSale(sale.id);
     if (mounted) Navigator.of(context).pop(); // Close loader
 
-    // Initialize return selection state with accurate remaining returnable quantities
-    final selections = sale.items.map((item) {
+    // Initialize return selection state ONLY for products with remaining returnable quantity > 0
+    final selections = <ReturnItemSelection>[];
+    for (var item in sale.items) {
       final pid = item.productId ?? item.id;
       final name = item.productNameSnapshot ?? item.productName ?? 'Product';
       final alreadyReturned = returnedMap[pid] ?? 0;
-      final remainingQty = (item.quantity - alreadyReturned) > 0 ? (item.quantity - alreadyReturned) : 0;
+      final remainingQty = item.quantity - alreadyReturned;
 
-      return ReturnItemSelection(
-        productId: pid,
-        productName: name,
-        sku: item.skuSnapshot ?? item.productSku,
-        selectedQuantity: remainingQty > 0 ? 1 : 0,
-        maxQuantity: remainingQty,
-        unitPrice: item.unitPrice,
-      );
-    }).toList();
+      if (remainingQty > 0) {
+        selections.add(ReturnItemSelection(
+          productId: pid,
+          productName: name,
+          sku: item.skuSnapshot ?? item.productSku,
+          selectedQuantity: 1,
+          maxQuantity: remainingQty,
+          unitPrice: item.unitPrice,
+        ));
+      }
+    }
 
-    final hasReturnableItems = selections.any((s) => s.maxQuantity > 0);
-    if (!hasReturnableItems) {
+    if (selections.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('All items in this sale have already been fully returned.')),
@@ -145,10 +159,12 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
     String refundPaymentMethod = sale.paymentMethod;
     bool isSubmitting = false;
 
+    if (!mounted) return;
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
+      builder: (dialogCtx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             final validSelections = selections.where((s) => s.selectedQuantity > 0).toList();
@@ -206,7 +222,6 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                           children: selections.asMap().entries.map((entry) {
                             final idx = entry.key;
                             final sel = entry.value;
-                            final isFullyReturned = sel.maxQuantity == 0;
 
                             return Padding(
                               padding: const EdgeInsets.symmetric(vertical: 4.0),
@@ -216,68 +231,51 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text(sel.productName, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: isFullyReturned ? Colors.grey : const Color(0xFF0F172A))),
+                                        Text(sel.productName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
                                         Text(
-                                          isFullyReturned
-                                              ? 'Fully Returned (Max: 0)'
-                                              : 'UnitPrice: ${CurrencyFormatter.format(sel.unitPrice)} | Remaining Returnable: ${sel.maxQuantity}',
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: isFullyReturned ? FontWeight.bold : FontWeight.normal,
-                                            color: isFullyReturned ? Colors.red.shade700 : Colors.grey[600],
-                                          ),
+                                          'UnitPrice: ${CurrencyFormatter.format(sel.unitPrice)} | Remaining Returnable: ${sel.maxQuantity}',
+                                          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                                         ),
                                       ],
                                     ),
                                   ),
 
                                   // Quantity Selector
-                                  if (!isFullyReturned)
-                                    Row(
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.remove_circle_outline, size: 20, color: Color(0xFF003366)),
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                          onPressed: sel.selectedQuantity > 0
-                                              ? () {
-                                                  setDialogState(() {
-                                                    selections[idx] = sel.copyWith(selectedQuantity: sel.selectedQuantity - 1);
-                                                  });
-                                                }
-                                              : null,
-                                        ),
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                                          child: Text(
-                                            '${sel.selectedQuantity}',
-                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                                          ),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.add_circle_outline, size: 20, color: Color(0xFF003366)),
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                          onPressed: sel.selectedQuantity < sel.maxQuantity
-                                              ? () {
-                                                  setDialogState(() {
-                                                    selections[idx] = sel.copyWith(selectedQuantity: sel.selectedQuantity + 1);
-                                                  });
-                                                }
-                                              : null,
-                                        ),
-                                      ],
-                                    )
-                                  else
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.red.shade50,
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: Colors.red.shade200),
+                                  Row(
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.remove_circle_outline, size: 20, color: Color(0xFF003366)),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                        onPressed: sel.selectedQuantity > 0
+                                            ? () {
+                                                setDialogState(() {
+                                                  selections[idx] = sel.copyWith(selectedQuantity: sel.selectedQuantity - 1);
+                                                });
+                                              }
+                                            : null,
                                       ),
-                                      child: const Text('Fully Returned', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.red)),
-                                    ),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                                        child: Text(
+                                          '${sel.selectedQuantity}',
+                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.add_circle_outline, size: 20, color: Color(0xFF003366)),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                        onPressed: sel.selectedQuantity < sel.maxQuantity
+                                            ? () {
+                                                setDialogState(() {
+                                                  selections[idx] = sel.copyWith(selectedQuantity: sel.selectedQuantity + 1);
+                                                });
+                                              }
+                                            : null,
+                                      ),
+                                    ],
+                                  ),
                                 ],
                               ),
                             );
@@ -399,7 +397,7 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: isSubmitting ? null : () => Navigator.of(ctx).pop(),
+                  onPressed: isSubmitting ? null : () => Navigator.of(dialogCtx).pop(),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
@@ -412,6 +410,7 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                       ? null
                       : () async {
                           setDialogState(() => isSubmitting = true);
+                          final messenger = ScaffoldMessenger.of(context);
 
                           try {
                             final result = await _returnService.processReturn(
@@ -421,32 +420,30 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                               paymentMethod: refundPaymentMethod,
                             );
 
-                            if (ctx.mounted) {
-                              Navigator.of(ctx).pop();
+                            if (result.isApproved && result.returnId.isNotEmpty) {
+                              // Fetch the newly created return record directly from the database
+                              final receipt = await _returnService.getReturnById(result.returnId);
 
-                              if (result.isApproved) {
-                                final receipt = ReturnReceiptModel(
-                                  returnId: result.returnId,
-                                  originalInvoiceNumber: sale.invoiceNumber,
-                                  returnDate: DateTime.now(),
-                                  returnedItems: validSelections,
-                                  refundAmount: result.refundAmount, // Authentic server refund
-                                  paymentMethod: refundPaymentMethod,
-                                  status: 'Approved',
-                                );
-                                _showReturnReceiptDialog(receipt);
-                              } else {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(result.message), backgroundColor: Colors.red[800]),
-                                );
+                              if (dialogCtx.mounted) {
+                                Navigator.of(dialogCtx).pop(); // Close inspection dialog
                               }
+                              if (mounted) {
+                                _showReturnReceiptDialog(receipt);
+                              }
+                            } else {
+                              if (dialogCtx.mounted) {
+                                Navigator.of(dialogCtx).pop();
+                              }
+                              messenger.showSnackBar(
+                                SnackBar(content: Text(result.message), backgroundColor: Colors.red[800]),
+                              );
                             }
                           } catch (e) {
                             setDialogState(() => isSubmitting = false);
-                            if (ctx.mounted) {
-                              ScaffoldMessenger.of(ctx).showSnackBar(
-                                SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red[800]),
-                              );
+                            messenger.showSnackBar(
+                              SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red[800]),
+                            );
+                            if (mounted) {
                               _loadData(); // Refresh UI state on error
                             }
                           }
@@ -783,7 +780,7 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
   }
 
   Widget _buildEligibleSalesList() {
-    // Filter sales to find items with maxQuantity > 0
+    // Filter sales to find items with remainingReturnableQty > 0
     final eligibleSales = _sales.where((sale) {
       final returnedMap = _saleReturnedQtyMap[sale.id] ?? {};
       final hasReturnableQty = sale.items.any((item) {
@@ -826,15 +823,19 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
         final sale = eligibleSales[index];
         final returnedMap = _saleReturnedQtyMap[sale.id] ?? {};
 
-        final itemSummaries = sale.items.map((i) {
+        // Only include items that have remainingReturnableQty > 0
+        final returnableItems = sale.items.where((item) {
+          final pid = item.productId ?? item.id;
+          final retQty = returnedMap[pid] ?? 0;
+          return (item.quantity - retQty) > 0;
+        }).toList();
+
+        final itemSummaries = returnableItems.map((i) {
           final pid = i.productId ?? i.id;
           final retQty = returnedMap[pid] ?? 0;
-          final remQty = (i.quantity - retQty) > 0 ? (i.quantity - retQty) : 0;
+          final remQty = i.quantity - retQty;
           final pName = i.productNameSnapshot ?? i.productName ?? 'Product';
 
-          if (remQty == 0) {
-            return '$pName [Fully Returned]';
-          }
           return '$remQty of ${i.quantity}x $pName';
         }).join(', ');
 

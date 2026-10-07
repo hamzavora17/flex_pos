@@ -109,6 +109,67 @@ class ReturnService {
     }
   }
 
+  /// Fetches a persisted return record by return ID directly from the database
+  /// and constructs the ReturnReceiptModel from authentic DB data.
+  Future<ReturnReceiptModel> getReturnById(String returnId) async {
+    final c = client;
+    if (!SupabaseConfig.isConfigured || c == null) {
+      throw Exception('Supabase is not configured.');
+    }
+
+    try {
+      final response = await c
+          .from('sale_returns')
+          .select('*, sales(invoice_number), sale_return_items(*, products(name, sku))')
+          .eq('id', returnId)
+          .single();
+
+      final json = response;
+      final rId = json['id']?.toString() ?? returnId;
+      final salesData = json['sales'] as Map<String, dynamic>?;
+      final invNo = salesData?['invoice_number']?.toString() ?? 'INV';
+      final dtRaw = json['created_at']?.toString();
+      if (dtRaw == null || dtRaw.isEmpty) {
+        throw Exception('Missing created_at timestamp in database return record $returnId');
+      }
+      final dt = DateTime.parse(dtRaw).toLocal();
+      final refAmount = (json['refund_amount'] as num?)?.toDouble() ?? 0.0;
+      final pMethod = json['payment_method']?.toString() ?? 'cash';
+      final status = json['status']?.toString() ?? 'approved';
+
+      final rawItems = json['sale_return_items'] as List<dynamic>? ?? [];
+      final items = <ReturnItemSelection>[];
+      for (var i in rawItems) {
+        final pData = i['products'] as Map<String, dynamic>?;
+        final pName = pData?['name']?.toString() ?? 'Returned Product';
+        final sku = pData?['sku']?.toString();
+        final qty = (i['quantity'] as num? ?? 1).toInt();
+        final price = (i['unit_price'] as num? ?? 0.0).toDouble();
+
+        items.add(ReturnItemSelection(
+          productId: i['product_id']?.toString() ?? '',
+          productName: pName,
+          sku: sku,
+          selectedQuantity: qty,
+          maxQuantity: qty,
+          unitPrice: price,
+        ));
+      }
+
+      return ReturnReceiptModel(
+        returnId: rId,
+        originalInvoiceNumber: invNo,
+        returnDate: dt,
+        returnedItems: items,
+        refundAmount: refAmount,
+        paymentMethod: pMethod,
+        status: status,
+      );
+    } catch (e) {
+      throw Exception('Failed to fetch persisted return record $returnId from database: $e');
+    }
+  }
+
   /// Fetches historical return receipts for store returns.
   Future<List<ReturnReceiptModel>> getReturnHistory() async {
     final c = client;
@@ -125,9 +186,11 @@ class ReturnService {
         final rId = ret['id']?.toString() ?? '';
         final salesData = ret['sales'] as Map<String, dynamic>?;
         final invNo = salesData?['invoice_number']?.toString() ?? 'INV-HIST';
-        final dt = ret['created_at'] != null
-            ? DateTime.parse(ret['created_at'].toString()).toLocal()
-            : DateTime.now();
+        final dtRaw = ret['created_at']?.toString();
+        if (dtRaw == null || dtRaw.isEmpty) {
+          throw Exception('Missing created_at timestamp in database return record $rId');
+        }
+        final dt = DateTime.parse(dtRaw).toLocal();
         final refAmount = (ret['refund_amount'] as num?)?.toDouble() ?? 0.0;
         final pMethod = ret['payment_method']?.toString() ?? 'cash';
         final status = ret['status']?.toString() ?? 'approved';

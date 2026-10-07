@@ -179,7 +179,7 @@ class CashierDashboardService {
       try {
         final shiftRes = await c.from('shifts').insert({
           'employee_id': userId,
-          if (branchId != null) 'branch_id': branchId,
+          'branch_id': branchId,
           'expected_cash': openingFloat,
           'status': 'open',
         }).select().single();
@@ -369,18 +369,8 @@ class CashierDashboardService {
     }
 
     final now = DateTime.now();
-    final todayStr = _formatWorkDate(now);
-
-    String targetWorkDate = todayStr;
-    if (salesList.isNotEmpty) {
-      final latestCreatedAt = DateTime.tryParse(salesList.first['created_at']?.toString() ?? '')?.toLocal();
-      if (latestCreatedAt != null) {
-        final latestDateStr = _formatWorkDate(latestCreatedAt);
-        if (latestDateStr == todayStr || now.difference(latestCreatedAt).inHours < 24) {
-          targetWorkDate = latestDateStr;
-        }
-      }
-    }
+    final todayStr = _formatWorkDate(now.toLocal());
+    final targetWorkDate = todayStr;
 
     final todaysSalesList = salesList.where((sale) {
       final createdAtRaw = sale['created_at']?.toString();
@@ -389,22 +379,72 @@ class CashierDashboardService {
       return _formatWorkDate(dt) == targetWorkDate;
     }).toList();
 
+    // ------------------------------------------------------------------------
+    // STEP 3B: APPROVED RETURNS QUERY FOR TODAY
+    // ------------------------------------------------------------------------
+    List<dynamic> returnsList = [];
+    try {
+      final returnsRes = await c
+          .from('sale_returns')
+          .select('id, sale_id, refund_amount, payment_method, status, created_at')
+          .eq('business_id', businessId)
+          .eq('employee_id', userId)
+          .eq('status', 'approved')
+          .order('created_at', ascending: false);
+
+      returnsList = returnsRes as List<dynamic>? ?? [];
+    } catch (_) {
+      // Ignore if sale_returns table is unavailable or empty
+    }
+
+    final todaysReturnsList = returnsList.where((ret) {
+      final createdAtRaw = ret['created_at']?.toString();
+      if (createdAtRaw == null) return false;
+      final dt = DateTime.parse(createdAtRaw).toLocal();
+      return _formatWorkDate(dt) == targetWorkDate;
+    }).toList();
+
+    // Map sale_id -> sum of approved refund_amount for today's returns
+    final refundsPerSaleMap = <String, double>{};
+    for (var ret in todaysReturnsList) {
+      final sId = ret['sale_id']?.toString() ?? '';
+      if (sId.isNotEmpty) {
+        final refAmt = (ret['refund_amount'] is num)
+            ? (ret['refund_amount'] as num).toDouble()
+            : double.tryParse(ret['refund_amount']?.toString() ?? '0.0') ?? 0.0;
+        refundsPerSaleMap[sId] = (refundsPerSaleMap[sId] ?? 0.0) + refAmt;
+      }
+    }
+
     double todaySales = 0.0;
     double todayEarnings = 0.0;
-    int todayBills = todaysSalesList.length;
+    int todayBills = 0;
 
     for (var sale in todaysSalesList) {
+      final saleId = sale['id']?.toString() ?? '';
       final totalVal = (sale['total'] is num)
           ? (sale['total'] as num).toDouble()
           : double.tryParse(sale['total']?.toString() ?? '0.0') ?? 0.0;
-      todaySales += totalVal;
+
+      final saleRefund = refundsPerSaleMap[saleId] ?? 0.0;
+      final netSaleTotal = (totalVal - saleRefund) > 0 ? (totalVal - saleRefund) : 0.0;
+
+      todaySales += netSaleTotal;
 
       final paymentsList = sale['payments'] as List<dynamic>? ?? [];
+      double salePayments = 0.0;
       for (var p in paymentsList) {
         final pAmt = (p['amount'] is num)
             ? (p['amount'] as num).toDouble()
             : double.tryParse(p['amount']?.toString() ?? '0.0') ?? 0.0;
-        todayEarnings += pAmt;
+        salePayments += pAmt;
+      }
+
+      final netSaleEarnings = (salePayments - saleRefund) > 0 ? (salePayments - saleRefund) : 0.0;
+      todayEarnings += netSaleEarnings;
+
+      if (netSaleTotal > 0 || (totalVal > 0 && saleRefund < totalVal)) {
+        todayBills++;
       }
     }
 
