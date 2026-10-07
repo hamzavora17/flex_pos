@@ -399,9 +399,11 @@ class _ManagerProductsScreenState extends State<ManagerProductsScreen> {
                                   border: const OutlineInputBorder(),
                                   isDense: true,
                                   helperText: !_isSingleBranch
-                                      ? (_branches.length > 1
-                                          ? 'Stock editing is disabled for multi-branch stores as inventory is managed per branch.'
-                                          : 'Stock editing is disabled as a valid store branch context could not be determined.')
+                                      ? (_branchLoadFailed
+                                          ? 'Stock editing is disabled as store branch context could not be determined.'
+                                          : (_branches.isEmpty
+                                              ? 'Stock editing is disabled as no store branches exist.'
+                                              : 'Stock editing is disabled for multi-branch stores as inventory is managed per branch.'))
                                       : null,
                                   helperMaxLines: 2,
                                 ),
@@ -459,15 +461,14 @@ class _ManagerProductsScreenState extends State<ManagerProductsScreen> {
                           setDialogState(() => isSaving = true);
 
                           String targetProductId = '';
-                          String name = '';
+                          String name = nameController.text.trim();
 
                           try {
-                            name = nameController.text.trim();
                             final sku = skuController.text.trim();
                             final barcode = barcodeController.text.trim();
                             final price = double.parse(priceController.text.trim());
                             final cost = double.parse(costController.text.trim());
-                            final stockQty = int.parse(stockController.text.trim());
+                            final stockQty = int.tryParse(stockController.text.trim()) ?? 0;
                             final minStock = int.parse(minStockController.text.trim());
 
                             final bId = await _businessService.getBusinessId();
@@ -512,10 +513,12 @@ class _ManagerProductsScreenState extends State<ManagerProductsScreen> {
                               targetProductId = created.id;
                             }
 
+                            String? inventoryError;
+
                             // Update inventory record ONLY for single-branch stores where branch context is 100% unambiguous
                             if (_isSingleBranch) {
                               final singleBranchId = _branches.first['id']?.toString();
-                              if (singleBranchId != null && targetProductId.isNotEmpty) {
+                              if (singleBranchId != null && singleBranchId.isNotEmpty && targetProductId.isNotEmpty) {
                                 try {
                                   final currentInv = await _inventoryService.getInventoryByProductId(
                                     productId: targetProductId,
@@ -541,32 +544,47 @@ class _ManagerProductsScreenState extends State<ManagerProductsScreen> {
                                     );
                                   }
                                 } catch (invErr) {
-                                  if (ctx.mounted) {
-                                    Navigator.of(ctx).pop();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Product details saved, but stock update failed: ${invErr.toString()}'),
-                                        backgroundColor: Colors.amber[900],
-                                      ),
-                                    );
-                                    _loadData();
-                                    return;
-                                  }
+                                  inventoryError = invErr.toString();
                                 }
                               }
                             }
 
                             if (ctx.mounted) {
                               Navigator.of(ctx).pop();
-                              final msg = _isSingleBranch
-                                  ? (isEditing ? 'Product "$name" updated successfully.' : 'Product "$name" added successfully.')
-                                  : 'Product "$name" saved. Stock levels must be managed per branch in multi-branch or unverified branch setups.';
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(msg),
-                                  backgroundColor: const Color(0xFF8DB600),
-                                ),
-                              );
+
+                              if (inventoryError != null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      isEditing
+                                          ? 'Product "$name" updated, but stock could not be saved: $inventoryError'
+                                          : 'Product "$name" created, but stock could not be saved: $inventoryError',
+                                    ),
+                                    backgroundColor: Colors.amber[900],
+                                    duration: const Duration(seconds: 5),
+                                  ),
+                                );
+                              } else {
+                                final String msg;
+                                if (_isSingleBranch) {
+                                  msg = isEditing
+                                      ? 'Product "$name" updated successfully.'
+                                      : 'Product "$name" added successfully.';
+                                } else if (_branches.length > 1) {
+                                  msg = 'Product "$name" saved. Stock levels must be managed per branch in multi-branch stores.';
+                                } else if (_branches.isEmpty && !_branchLoadFailed) {
+                                  msg = 'Product "$name" saved, but stock could not be assigned as no store branches exist.';
+                                } else {
+                                  msg = 'Product "$name" saved, but stock could not be assigned as branch context is unverified.';
+                                }
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(msg),
+                                    backgroundColor: const Color(0xFF8DB600),
+                                  ),
+                                );
+                              }
                               _loadData();
                             }
                           } catch (e) {

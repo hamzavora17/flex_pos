@@ -84,6 +84,17 @@ class InventoryService {
     }
   }
 
+  String _formatPostgrestError(String prefix, PostgrestException e) {
+    final msg = e.message.toLowerCase();
+    if (e.code == '42501' || msg.contains('row-level security') || msg.contains('permission denied')) {
+      return '$prefix: Access denied by security policy.';
+    }
+    if (e.message.isNotEmpty) {
+      return '$prefix: ${e.message}';
+    }
+    return '$prefix due to a database error.';
+  }
+
   /// Creates a new inventory record for a product.
   Future<InventoryItem> createInventory(InventoryItem inventory) async {
     _validateInventory(inventory, isUpdate: false);
@@ -100,8 +111,10 @@ class InventoryService {
       return InventoryItem.fromMap(response);
     } on FlexPOSException {
       rethrow;
+    } on PostgrestException catch (e) {
+      throw InventoryException(_formatPostgrestError('Unable to save inventory record', e), e);
     } catch (e) {
-      throw InventoryException('Unable to save inventory record', e);
+      throw InventoryException('Unable to save inventory record: ${e.toString()}', e);
     }
   }
 
@@ -123,8 +136,10 @@ class InventoryService {
       return InventoryItem.fromMap(response);
     } on FlexPOSException {
       rethrow;
+    } on PostgrestException catch (e) {
+      throw InventoryException(_formatPostgrestError('Unable to update inventory record', e), e);
     } catch (e) {
-      throw InventoryException('Unable to update inventory record', e);
+      throw InventoryException('Unable to update inventory record: ${e.toString()}', e);
     }
   }
 

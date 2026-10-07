@@ -168,13 +168,30 @@ class ProductService {
     }
   }
 
+  String _formatPostgrestError(String prefix, PostgrestException e) {
+    final msg = e.message.toLowerCase();
+    if (msg.contains('unique_business_sku') || msg.contains('sku')) {
+      return '$prefix: A product with this SKU already exists in your store.';
+    }
+    if (msg.contains('unique_business_barcode') || msg.contains('barcode')) {
+      return '$prefix: A product with this barcode already exists in your store.';
+    }
+    if (e.code == '42501' || msg.contains('row-level security') || msg.contains('permission denied')) {
+      return '$prefix: Access denied by security policy.';
+    }
+    if (e.message.isNotEmpty) {
+      return '$prefix: ${e.message}';
+    }
+    return '$prefix due to a database error.';
+  }
+
   /// Creates a new product in the authenticated user's store catalog.
   Future<Product> createProduct(Product product, {bool includeStockQuantity = true}) async {
     _validateProduct(product, isUpdate: false);
 
     try {
       final bId = await businessService.getBusinessId();
-      final payload = product.copyWith(businessId: bId).toMap(includeStockQuantity: includeStockQuantity);
+      final payload = product.copyWith(businessId: bId).toMap();
       final response = await client
           .from('products')
           .insert(payload)
@@ -184,8 +201,10 @@ class ProductService {
       return Product.fromMap(response);
     } on FlexPOSException {
       rethrow;
+    } on PostgrestException catch (e) {
+      throw ProductException(_formatPostgrestError('Unable to save product', e), e);
     } catch (e) {
-      throw ProductException('Unable to save product', e);
+      throw ProductException('Unable to save product: ${e.toString()}', e);
     }
   }
 
@@ -195,7 +214,7 @@ class ProductService {
 
     try {
       final bId = await businessService.getBusinessId();
-      final payload = product.copyWith(businessId: bId).toMap(includeStockQuantity: includeStockQuantity);
+      final payload = product.copyWith(businessId: bId).toMap();
       final response = await client
           .from('products')
           .update(payload)
@@ -207,8 +226,10 @@ class ProductService {
       return Product.fromMap(response);
     } on FlexPOSException {
       rethrow;
+    } on PostgrestException catch (e) {
+      throw ProductException(_formatPostgrestError('Unable to update product', e), e);
     } catch (e) {
-      throw ProductException('Unable to update product', e);
+      throw ProductException('Unable to update product: ${e.toString()}', e);
     }
   }
 

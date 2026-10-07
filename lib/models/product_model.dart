@@ -78,25 +78,22 @@ class Product {
   }
 
   /// Converts the [Product] instance into a map for Supabase insert/update.
-  Map<String, dynamic> toMap({bool includeStockQuantity = true}) {
+  ///
+  /// Only contains real columns present on `public.products` table.
+  /// Stock quantities belong in `public.inventory` table.
+  Map<String, dynamic> toMap({bool includeStockQuantity = false}) {
     return {
       if (id.isNotEmpty) 'id': id,
       'business_id': businessId,
       'category_id': categoryId,
       'name': name,
-      'product_name': name,
       'sku': (sku != null && sku!.trim().isNotEmpty) ? sku!.trim() : null,
       'barcode': (barcode != null && barcode!.trim().isNotEmpty) ? barcode!.trim() : null,
       'price': price,
       'cost': cost,
-      'selling_price': price,
-      'purchase_price': cost,
       'active': active,
-      'is_active': active,
       'unit': unit,
       'min_stock_alert': minStockAlert,
-      'minimum_stock_level': minStockAlert,
-      if (includeStockQuantity) 'stock_quantity': stockQuantity,
     };
   }
 
