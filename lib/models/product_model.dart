@@ -78,7 +78,7 @@ class Product {
   }
 
   /// Converts the [Product] instance into a map for Supabase insert/update.
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toMap({bool includeStockQuantity = true}) {
     return {
       if (id.isNotEmpty) 'id': id,
       'business_id': businessId,
@@ -96,7 +96,7 @@ class Product {
       'unit': unit,
       'min_stock_alert': minStockAlert,
       'minimum_stock_level': minStockAlert,
-      'stock_quantity': stockQuantity,
+      if (includeStockQuantity) 'stock_quantity': stockQuantity,
     };
   }
 

@@ -169,12 +169,12 @@ class ProductService {
   }
 
   /// Creates a new product in the authenticated user's store catalog.
-  Future<Product> createProduct(Product product) async {
+  Future<Product> createProduct(Product product, {bool includeStockQuantity = true}) async {
     _validateProduct(product, isUpdate: false);
 
     try {
       final bId = await businessService.getBusinessId();
-      final payload = product.copyWith(businessId: bId).toMap();
+      final payload = product.copyWith(businessId: bId).toMap(includeStockQuantity: includeStockQuantity);
       final response = await client
           .from('products')
           .insert(payload)
@@ -190,12 +190,12 @@ class ProductService {
   }
 
   /// Updates an existing product in the authenticated user's store catalog.
-  Future<Product> updateProduct(Product product) async {
+  Future<Product> updateProduct(Product product, {bool includeStockQuantity = true}) async {
     _validateProduct(product, isUpdate: true);
 
     try {
       final bId = await businessService.getBusinessId();
-      final payload = product.copyWith(businessId: bId).toMap();
+      final payload = product.copyWith(businessId: bId).toMap(includeStockQuantity: includeStockQuantity);
       final response = await client
           .from('products')
           .update(payload)
