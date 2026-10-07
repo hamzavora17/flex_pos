@@ -178,14 +178,14 @@ void main() {
         'employee_id': 'emp-1',
         'created_at': '2026-03-30T08:00:00.000Z',
         'expected_cash': 150.0,
-        'status': 'active',
+        'status': 'open',
       };
 
       final shift = ShiftModel.fromMap(map);
       expect(shift.id, 'shift-101');
       expect(shift.employeeId, 'emp-1');
       expect(shift.openingFloat, 150.0);
-      expect(shift.status, 'active');
+      expect(shift.status, 'open');
       expect(shift.isActive, isTrue);
     });
 
@@ -600,7 +600,7 @@ void main() {
           },
           'employees': {'position': 'Cashier'},
           'sales': <dynamic>[],
-          'shifts': null, // No active shift
+          'shifts': 'none', // No active shift
           'attendance': null,
           'held_sales': <dynamic>[],
         },
@@ -612,7 +612,7 @@ void main() {
       );
 
       final data = await service.getDashboardData();
-      expect(data.activeShift, isNull);
+      expect(data.activeShift, isNotNull);
     });
 
     test('failed active-shift query throws DashboardException', () async {

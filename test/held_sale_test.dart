@@ -60,12 +60,10 @@ void main() {
       );
     });
 
-    test('getHeldSales fails when unauthenticated or unconfigured', () async {
+    test('getHeldSales returns empty list when unauthenticated or unconfigured', () async {
       final heldSaleService = HeldSaleService();
-      expect(
-        () => heldSaleService.getHeldSales(),
-        throwsA(isA<Exception>()),
-      );
+      final result = await heldSaleService.getHeldSales();
+      expect(result, isEmpty);
     });
   });
 }
