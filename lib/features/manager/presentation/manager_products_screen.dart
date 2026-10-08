@@ -178,11 +178,36 @@ class _ManagerProductsScreenState extends State<ManagerProductsScreen> {
     final minStockController = TextEditingController(
         text: isEditing ? existingProduct.minStockAlert.toString() : '5');
 
-    String selectedUnit = existingProduct?.unit ?? 'pcs';
+    final rawUnit = existingProduct?.unit.trim() ?? '';
+    final baseUnitOptions = [
+      'pcs',
+      'kg',
+      'g',
+      'ltr',
+      'ml',
+      'box',
+      'pack',
+      'bag',
+      'piece',
+      'bottle',
+      'can',
+      'set',
+    ];
+
+    String selectedUnit = rawUnit.isEmpty
+        ? 'pcs'
+        : baseUnitOptions.firstWhere(
+            (u) => u.toLowerCase() == rawUnit.toLowerCase(),
+            orElse: () => rawUnit,
+          );
+
+    final unitOptions = <String>{
+      ...baseUnitOptions,
+      selectedUnit,
+    }.toList();
+
     bool activeStatus = existingProduct?.active ?? true;
     bool isSaving = false;
-
-    final unitOptions = ['pcs', 'kg', 'g', 'ltr', 'ml', 'box', 'pack'];
 
     showDialog(
       context: context,
@@ -259,7 +284,7 @@ class _ManagerProductsScreenState extends State<ManagerProductsScreen> {
                           children: [
                             Expanded(
                               child: DropdownButtonFormField<String>(
-                                initialValue: selectedUnit,
+                                value: selectedUnit,
                                 items: unitOptions
                                     .map((u) => DropdownMenuItem(value: u, child: Text(u)))
                                     .toList(),
@@ -615,193 +640,62 @@ class _ManagerProductsScreenState extends State<ManagerProductsScreen> {
     );
   }
 
-  void _handleDeleteOrDeactivate(Product product) async {
-    // Loader dialog
+  void _handleDeleteOrDeactivate(Product product) {
     showDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const Center(
-        child: CircularProgressIndicator(color: Color(0xFF003366)),
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever_rounded, color: Colors.red, size: 24),
+            SizedBox(width: 8),
+            Text('Permanently Delete Product?'),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to delete "${product.name}"?\n\n'
+          'This will permanently delete this product from the catalog and remove its active stock records. Completed sales, receipts, return history, and inventory audit records will be preserved.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red[800],
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              try {
+                await _productService.deleteProduct(product.id);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Product "${product.name}" permanently deleted.'),
+                      backgroundColor: Colors.red[800],
+                    ),
+                  );
+                  _loadData();
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to delete product: ${e.toString()}'),
+                      backgroundColor: Colors.red[800],
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Delete Product'),
+          ),
+        ],
       ),
     );
-
-    final checkResult = await _checkHasHistoricalReferences(product.id);
-    if (mounted) Navigator.of(context).pop(); // Close loader
-
-    if (!mounted) return;
-
-    if (checkResult == HistoryCheckResult.checkFailed) {
-      // FAIL CLOSED: Check failed -> Permanent deletion is BLOCKED!
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 24),
-              SizedBox(width: 8),
-              Text('History Verification Failed'),
-            ],
-          ),
-          content: Text(
-            'Could not verify transaction history for product "${product.name}" due to a network or database error.\n\nPermanent deletion is disabled while history status is unverified. Please retry later or deactivate the product.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF003366),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              onPressed: () async {
-                Navigator.of(ctx).pop();
-                try {
-                  await _productService.deactivateProduct(product.id);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Product "${product.name}" deactivated.'),
-                        backgroundColor: const Color(0xFF003366),
-                      ),
-                    );
-                    _loadData();
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Failed to deactivate product: ${e.toString()}'),
-                        backgroundColor: Colors.red[800],
-                      ),
-                    );
-                  }
-                }
-              },
-              child: const Text('Deactivate Product'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-
-    if (checkResult == HistoryCheckResult.historyExists) {
-      // HISTORY EXISTS: Permanent deletion NOT offered!
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: const Row(
-            children: [
-              Icon(Icons.inventory_2_outlined, color: Colors.amber, size: 24),
-              SizedBox(width: 8),
-              Text('Product Has Transaction History'),
-            ],
-          ),
-          content: Text(
-            'Product "${product.name}" has recorded sales, returns, or inventory audit logs.\n\nTo preserve historical store and financial audit records, permanent deletion is disabled. Deactivating hides it from cashier checkout while preserving sales history.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF003366),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              onPressed: () async {
-                Navigator.of(ctx).pop();
-                try {
-                  await _productService.deactivateProduct(product.id);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Product "${product.name}" deactivated.'),
-                        backgroundColor: const Color(0xFF003366),
-                      ),
-                    );
-                    _loadData();
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Failed to deactivate product: ${e.toString()}'),
-                        backgroundColor: Colors.red[800],
-                      ),
-                    );
-                  }
-                }
-              },
-              child: const Text('Deactivate Product'),
-            ),
-          ],
-        ),
-      );
-    } else {
-      // NO HISTORY: Permanent deletion permitted
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: const Row(
-            children: [
-              Icon(Icons.delete_forever_rounded, color: Colors.red, size: 24),
-              SizedBox(width: 8),
-              Text('Permanently Delete Product?'),
-            ],
-          ),
-          content: Text(
-            'Product "${product.name}" has no historical transactions. Are you sure you want to permanently delete it?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red[800],
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              onPressed: () async {
-                Navigator.of(ctx).pop();
-                try {
-                  await _productService.deleteProduct(product.id);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Product "${product.name}" permanently deleted.'),
-                        backgroundColor: Colors.red[800],
-                      ),
-                    );
-                    _loadData();
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Failed to delete product: ${e.toString()}'),
-                        backgroundColor: Colors.red[800],
-                      ),
-                    );
-                  }
-                }
-              },
-              child: const Text('Delete'),
-            ),
-          ],
-        ),
-      );
-    }
   }
 
   @override
