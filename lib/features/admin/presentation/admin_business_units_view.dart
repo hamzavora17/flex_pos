@@ -5,7 +5,7 @@ import '../../../models/admin_models.dart';
 import '../../../services/admin_dashboard_service.dart';
 import 'admin_business_detail_dialog.dart';
 
-/// Interactive Business Units management view for the Admin Panel.
+/// Single-business management view for FlexPOS in the Admin Control Center.
 class AdminBusinessUnitsView extends StatefulWidget {
   final AdminDashboardService adminService;
 
@@ -23,9 +23,6 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
   bool _isLoading = true;
   String? _errorMessage;
 
-  String _searchQuery = '';
-  String _statusFilter = 'all';
-
   @override
   void initState() {
     super.initState();
@@ -39,10 +36,7 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
     });
 
     try {
-      final list = await widget.adminService.getBusinessUnits(
-        searchQuery: _searchQuery,
-        statusFilter: _statusFilter,
-      );
+      final list = await widget.adminService.getBusinessUnits();
       if (mounted) {
         setState(() {
           _businesses = list;
@@ -55,175 +49,6 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
           _errorMessage = e.toString().replaceAll('Exception: ', '');
           _isLoading = false;
         });
-      }
-    }
-  }
-
-  Future<void> _showAddBusinessDialog() async {
-    final nameController = TextEditingController();
-    final emailController = TextEditingController();
-    final phoneController = TextEditingController();
-    final addressController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-    bool isSubmitting = false;
-    String? dialogErr;
-
-    await showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.store, color: Color(0xFF003366)),
-                  SizedBox(width: 8),
-                  Text('Register New Business Store'),
-                ],
-              ),
-              content: SingleChildScrollView(
-                child: Form(
-                  key: formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (dialogErr != null) ...[
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: Colors.red.shade200),
-                          ),
-                          child: Text(dialogErr!, style: const TextStyle(color: Colors.red, fontSize: 13)),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      TextFormField(
-                        controller: nameController,
-                        decoration: const InputDecoration(
-                          labelText: 'Business Name *',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.business),
-                        ),
-                        validator: (val) => val == null || val.trim().isEmpty ? 'Business name is required' : null,
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: emailController,
-                        decoration: const InputDecoration(
-                          labelText: 'Business Email',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.email),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: phoneController,
-                        decoration: const InputDecoration(
-                          labelText: 'Contact Phone',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.phone),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: addressController,
-                        decoration: const InputDecoration(
-                          labelText: 'Physical Address',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.location_on),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isSubmitting ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF003366),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: isSubmitting
-                      ? null
-                      : () async {
-                          if (!formKey.currentState!.validate()) return;
-                          setDialogState(() {
-                            isSubmitting = true;
-                            dialogErr = null;
-                          });
-
-                          try {
-                            await widget.adminService.createBusiness(
-                              name: nameController.text,
-                              email: emailController.text,
-                              phone: phoneController.text,
-                              address: addressController.text,
-                            );
-
-                            if (context.mounted) {
-                              Navigator.of(context).pop();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Business "${nameController.text}" successfully created!'),
-                                  backgroundColor: Colors.green[800],
-                                ),
-                              );
-                              _loadBusinesses();
-                            }
-                          } catch (e) {
-                            setDialogState(() {
-                              isSubmitting = false;
-                              dialogErr = e.toString().replaceAll('Exception: ', '');
-                            });
-                          }
-                        },
-                  child: isSubmitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
-                      : const Text('Create Store'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    nameController.dispose();
-    emailController.dispose();
-    phoneController.dispose();
-    addressController.dispose();
-  }
-
-  Future<void> _updateStatus(BusinessUnitModel business, String newStatus) async {
-    try {
-      await widget.adminService.manageBusinessStatus(business.id, newStatus);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Business "${business.businessName}" status updated to ${newStatus.toUpperCase()}'),
-            backgroundColor: Colors.green[800],
-          ),
-        );
-        _loadBusinesses();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to update status: $e'),
-            backgroundColor: Colors.red[800],
-          ),
-        );
       }
     }
   }
@@ -253,29 +78,32 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Business Units Management',
+                    'Business Unit Management',
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                   ),
                   const SizedBox(height: 4),
-                  Text('Manage store locations, owner profiles, operational status, and metrics', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                  Text(
+                    'FlexPOS store configuration, owner profile, operational status, and sales metrics',
+                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                  ),
                 ],
               ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add_business, size: 18),
-                label: const Text('Add Business Store'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF003366),
-                  foregroundColor: Colors.white,
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Refresh Data'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF003366),
+                  side: const BorderSide(color: Color(0xFF003366)),
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                onPressed: _showAddBusinessDialog,
+                onPressed: _loadBusinesses,
               ),
             ],
           ),
           const SizedBox(height: 20),
 
-          // Search and Filters Bar
+          // Single Store Status Header Bar
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -287,50 +115,38 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
             ),
             child: Row(
               children: [
-                Expanded(
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      hintText: 'Search business by name, owner, or email...',
-                      prefixIcon: Icon(Icons.search),
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    ),
-                    onChanged: (val) {
-                      _searchQuery = val;
-                      _loadBusinesses();
-                    },
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: Colors.green,
+                    shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(width: 16),
-                DropdownButton<String>(
-                  value: _statusFilter,
-                  underline: const SizedBox(),
-                  items: const [
-                    DropdownMenuItem(value: 'all', child: Text('All Statuses')),
-                    DropdownMenuItem(value: 'active', child: Text('Active Only')),
-                    DropdownMenuItem(value: 'inactive', child: Text('Inactive Only')),
-                    DropdownMenuItem(value: 'suspended', child: Text('Suspended Only')),
-                    DropdownMenuItem(value: 'archived', child: Text('Archived Only')),
-                  ],
-                  onChanged: (val) {
-                    if (val != null) {
-                      setState(() => _statusFilter = val);
-                      _loadBusinesses();
-                    }
-                  },
+                const SizedBox(width: 10),
+                const Text(
+                  'FlexPOS • Single-Business System Active',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                 ),
-                const SizedBox(width: 12),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: _loadBusinesses,
-                  tooltip: 'Reload Businesses',
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.green.shade200),
+                  ),
+                  child: Text(
+                    'OPERATIONAL',
+                    style: TextStyle(color: Colors.green.shade800, fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 20),
 
-          // Business Units Content
+          // Business Unit Content
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -342,15 +158,21 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
                         ),
                       )
                     : _businesses.isEmpty
-                        ? const Center(
+                        ? Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.storefront_outlined, size: 64, color: Colors.grey),
-                                SizedBox(height: 16),
-                                Text(
-                                  'No business units match your search or criteria.',
+                                const Icon(Icons.storefront_outlined, size: 64, color: Colors.grey),
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'FlexPOS business unit initialization pending.',
                                   style: TextStyle(color: Colors.grey, fontSize: 16),
+                                ),
+                                const SizedBox(height: 12),
+                                ElevatedButton.icon(
+                                  onPressed: _loadBusinesses,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Retry Loading'),
                                 ),
                               ],
                             ),
@@ -370,6 +192,11 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
   }
 
   Widget _buildBusinessCard(BusinessUnitModel b) {
+    // Ensure display name is strictly FlexPOS
+    final displayName = (b.businessName.isEmpty || b.businessName == 'Unnamed Store' || b.businessName == 'Demo FlexPOS Store')
+        ? 'FlexPOS'
+        : b.businessName;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -398,7 +225,7 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
                 Row(
                   children: [
                     Text(
-                      b.businessName,
+                      displayName,
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                     ),
                     const SizedBox(width: 10),
@@ -432,22 +259,16 @@ class _AdminBusinessUnitsViewState extends State<AdminBusinessUnitsView> {
           ),
           Row(
             children: [
-              OutlinedButton.icon(
+              ElevatedButton.icon(
                 icon: const Icon(Icons.visibility, size: 16),
                 label: const Text('View Details'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF003366),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
                 onPressed: () => _showBusinessDetails(b),
-              ),
-              const SizedBox(width: 8),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
-                tooltip: 'Change Status',
-                onSelected: (val) => _updateStatus(b, val),
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'active', child: Text('Set Active')),
-                  PopupMenuItem(value: 'inactive', child: Text('Set Inactive')),
-                  PopupMenuItem(value: 'suspended', child: Text('Set Suspended')),
-                  PopupMenuItem(value: 'archived', child: Text('Archive Store')),
-                ],
               ),
             ],
           ),

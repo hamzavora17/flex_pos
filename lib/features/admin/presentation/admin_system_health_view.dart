@@ -133,7 +133,7 @@ class _AdminSystemHealthViewState extends State<AdminSystemHealthView> {
                       const SizedBox(height: 16),
                       _buildInfoRow('Supabase Project URL', SupabaseConfig.url),
                       const Divider(height: 24),
-                      _buildInfoRow('Active Business Stores', '${widget.stats?.businessMetrics.active ?? 0} Stores Online'),
+                      _buildInfoRow('Business Store Unit', 'FlexPOS (Active)'),
                       const Divider(height: 24),
                       _buildInfoRow('Active User Sessions', '${widget.stats?.userMetrics.active ?? 0} Authenticated Users'),
                       const Divider(height: 24),

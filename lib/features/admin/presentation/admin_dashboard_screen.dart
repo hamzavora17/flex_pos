@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/config/supabase_config.dart';
 import '../../../models/admin_models.dart';
@@ -439,7 +438,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         const Divider(color: Colors.white10, height: 1),
         const SizedBox(height: 16),
         _buildSidebarItem(0, Icons.dashboard, 'Overview'),
-        _buildSidebarItem(1, Icons.business, 'Business Units'),
+        _buildSidebarItem(1, Icons.business, 'Business Unit'),
         _buildSidebarItem(2, Icons.people, 'User Management'),
         _buildSidebarItem(3, Icons.settings, 'System Settings'),
         _buildSidebarItem(4, Icons.health_and_safety, 'System Health'),

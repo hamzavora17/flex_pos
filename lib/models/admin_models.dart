@@ -194,7 +194,7 @@ class AdminActivityLog {
     return AdminActivityLog(
       id: map['id']?.toString() ?? '',
       businessId: map['business_id']?.toString(),
-      businessName: bData?['business_name']?.toString(),
+      businessName: bData?['name']?.toString() ?? bData?['business_name']?.toString() ?? 'FlexPOS',
       userId: map['user_id']?.toString(),
       userName: pData?['full_name']?.toString() ?? pData?['email']?.toString(),
       type: map['type']?.toString() ?? 'system',
@@ -265,10 +265,14 @@ class BusinessUnitModel {
         : DateTime.now();
 
     final ownerMap = map['profiles'] as Map<String, dynamic>?;
+    final rawName = map['name']?.toString() ?? map['business_name']?.toString();
+    final name = (rawName == null || rawName.trim().isEmpty || rawName == 'Unnamed Store' || rawName == 'Demo FlexPOS Store')
+        ? 'FlexPOS'
+        : rawName;
 
     return BusinessUnitModel(
       id: map['id']?.toString() ?? '',
-      businessName: map['business_name']?.toString() ?? 'Unnamed Store',
+      businessName: name,
       ownerId: map['owner_id']?.toString() ?? '',
       ownerName: ownerMap?['full_name']?.toString(),
       ownerEmail: ownerMap?['email']?.toString(),
@@ -339,27 +343,63 @@ class AdminUserSummary {
         ? DateTime.parse(rawTs).toLocal()
         : DateTime.now();
 
-    String bName = 'Unassigned';
-    final empList = map['employees'] as List<dynamic>?;
-    if (empList != null && empList.isNotEmpty) {
-      final empMap = empList.first as Map<String, dynamic>;
-      final bMap = empMap['businesses'] as Map<String, dynamic>?;
-      if (bMap != null && bMap['business_name'] != null) {
-        bName = bMap['business_name'].toString();
+    Map<String, dynamic>? empMap;
+    final rawEmployees = map['employees'];
+    if (rawEmployees is Map) {
+      empMap = Map<String, dynamic>.from(rawEmployees);
+    } else if (rawEmployees is List && rawEmployees.isNotEmpty) {
+      final firstItem = rawEmployees.first;
+      if (firstItem is Map) {
+        empMap = Map<String, dynamic>.from(firstItem);
       }
     }
 
+    String bName = 'FlexPOS';
     String empStatus = 'active';
-    if (empList != null && empList.isNotEmpty) {
-      final empMap = empList.first as Map<String, dynamic>;
+
+    if (empMap != null) {
       empStatus = empMap['status']?.toString() ?? 'active';
+
+      final rawBusinesses = empMap['businesses'];
+      Map<String, dynamic>? bMap;
+      if (rawBusinesses is Map) {
+        bMap = Map<String, dynamic>.from(rawBusinesses);
+      } else if (rawBusinesses is List && rawBusinesses.isNotEmpty) {
+        final firstB = rawBusinesses.first;
+        if (firstB is Map) {
+          bMap = Map<String, dynamic>.from(firstB);
+        }
+      }
+
+      if (bMap != null) {
+        final fetchedName = bMap['business_name']?.toString() ?? bMap['name']?.toString();
+        if (fetchedName != null && fetchedName.isNotEmpty) {
+          bName = fetchedName;
+        }
+      }
     }
+
+    final rawName = map['full_name']?.toString();
+    final rawEmail = map['email']?.toString() ?? 'No Email';
+    final String displayName;
+    if (rawName != null && rawName.trim().isNotEmpty) {
+      displayName = rawName.trim();
+    } else if (rawEmail.contains('@')) {
+      displayName = rawEmail.split('@').first;
+    } else {
+      displayName = 'User';
+    }
+
+    final rawRole = map['role']?.toString();
+    final role = (rawRole != null && rawRole.trim().isNotEmpty)
+        ? rawRole.trim().toLowerCase()
+        : 'cashier';
 
     return AdminUserSummary(
       id: map['id']?.toString() ?? '',
-      email: map['email']?.toString() ?? 'No Email',
-      fullName: map['full_name']?.toString() ?? 'User',
-      role: map['role']?.toString() ?? 'unassigned',
+      email: rawEmail,
+      fullName: displayName,
+      role: role,
       status: empStatus,
       businessName: bName,
       createdAt: dt,

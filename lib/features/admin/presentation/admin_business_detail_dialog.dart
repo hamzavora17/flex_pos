@@ -90,6 +90,10 @@ class _AdminBusinessDetailDialogState extends State<AdminBusinessDetailDialog> {
     final double monthRev = (_details!['monthly_revenue'] as num? ?? 0.0).toDouble();
     final int monthTx = (_details!['monthly_transactions'] as num? ?? 0).toInt();
 
+    final bName = (business.businessName.isEmpty || business.businessName == 'Unnamed Store' || business.businessName == 'Demo FlexPOS Store')
+        ? 'FlexPOS'
+        : business.businessName;
+
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -102,7 +106,7 @@ class _AdminBusinessDetailDialogState extends State<AdminBusinessDetailDialog> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    business.businessName,
+                    bName,
                     style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                   ),
                   const SizedBox(height: 2),

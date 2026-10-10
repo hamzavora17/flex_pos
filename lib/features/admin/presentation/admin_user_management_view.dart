@@ -19,7 +19,7 @@ class AdminUserManagementView extends StatefulWidget {
 }
 
 class _AdminUserManagementViewState extends State<AdminUserManagementView> {
-  List<AdminUserSummary> _users = [];
+  List<AdminUserSummary> _allUsers = [];
   bool _isLoading = true;
   String? _errorMessage;
 
@@ -39,13 +39,10 @@ class _AdminUserManagementViewState extends State<AdminUserManagementView> {
     });
 
     try {
-      final list = await widget.adminService.getAdminUsers(
-        searchQuery: _searchQuery,
-        roleFilter: _roleFilter,
-      );
+      final list = await widget.adminService.getAdminUsers();
       if (mounted) {
         setState(() {
-          _users = list;
+          _allUsers = list;
           _isLoading = false;
         });
       }
@@ -59,12 +56,41 @@ class _AdminUserManagementViewState extends State<AdminUserManagementView> {
     }
   }
 
+  List<AdminUserSummary> get _filteredUsers {
+    return _allUsers.where((u) {
+      // Exclude Admin details/users from staff management view
+      if (u.role == 'admin') return false;
+
+      // Role Filter
+      if (_roleFilter != 'all') {
+        if (_roleFilter == 'cashier') {
+          if (u.role != 'cashier' && u.role != 'employee') return false;
+        } else if (u.role != _roleFilter) {
+          return false;
+        }
+      }
+
+      // Search Query
+      if (_searchQuery.trim().isNotEmpty) {
+        final q = _searchQuery.trim().toLowerCase();
+        final nameMatch = u.fullName.toLowerCase().contains(q);
+        final emailMatch = u.email.toLowerCase().contains(q);
+        final bMatch = (u.businessName ?? '').toLowerCase().contains(q);
+        if (!nameMatch && !emailMatch && !bMatch) return false;
+      }
+
+      return true;
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final total = _users.length;
-    final admins = _users.where((u) => u.role == 'admin').length;
-    final managers = _users.where((u) => u.role == 'manager').length;
-    final cashiers = _users.where((u) => u.role == 'cashier' || u.role == 'employee').length;
+    final staffUsers = _allUsers.where((u) => u.role != 'admin').toList();
+    final totalStaff = staffUsers.length;
+    final managers = staffUsers.where((u) => u.role == 'manager').length;
+    final cashiers = staffUsers.where((u) => u.role == 'cashier' || u.role == 'employee').length;
+
+    final displayUsers = _filteredUsers;
 
     return Padding(
       padding: const EdgeInsets.all(24.0),
@@ -104,9 +130,7 @@ class _AdminUserManagementViewState extends State<AdminUserManagementView> {
           // User Summary Cards
           Row(
             children: [
-              _buildSummaryCard('Total Registered Users', '$total', Icons.people, Colors.blue),
-              const SizedBox(width: 16),
-              _buildSummaryCard('Administrators', '$admins', Icons.security, Colors.purple),
+              _buildSummaryCard('Total Staff Members', '$totalStaff', Icons.people, Colors.blue),
               const SizedBox(width: 16),
               _buildSummaryCard('Store Managers', '$managers', Icons.supervisor_account, Colors.amber.shade800),
               const SizedBox(width: 16),
@@ -136,25 +160,24 @@ class _AdminUserManagementViewState extends State<AdminUserManagementView> {
                       contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     ),
                     onChanged: (val) {
-                      _searchQuery = val;
-                      _loadUsers();
+                      setState(() {
+                        _searchQuery = val;
+                      });
                     },
                   ),
                 ),
                 const SizedBox(width: 16),
                 DropdownButton<String>(
-                  value: _roleFilter,
+                  value: (_roleFilter == 'admin') ? 'all' : _roleFilter,
                   underline: const SizedBox(),
                   items: const [
-                    DropdownMenuItem(value: 'all', child: Text('All Roles')),
-                    DropdownMenuItem(value: 'admin', child: Text('Admins')),
+                    DropdownMenuItem(value: 'all', child: Text('All Staff')),
                     DropdownMenuItem(value: 'manager', child: Text('Managers')),
                     DropdownMenuItem(value: 'cashier', child: Text('Cashiers')),
                   ],
                   onChanged: (val) {
                     if (val != null) {
                       setState(() => _roleFilter = val);
-                      _loadUsers();
                     }
                   },
                 ),
@@ -175,29 +198,62 @@ class _AdminUserManagementViewState extends State<AdminUserManagementView> {
                 ? const Center(child: CircularProgressIndicator())
                 : _errorMessage != null
                     ? Center(
-                        child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
-                      )
-                    : _users.isEmpty
-                        ? const Center(
-                            child: Text('No users match your criteria.', style: TextStyle(color: Colors.grey)),
-                          )
-                        : Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 8, offset: const Offset(0, 2)),
-                              ],
-                            ),
-                            child: ListView.separated(
-                              itemCount: _users.length,
-                              separatorBuilder: (_, _) => const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                              itemBuilder: (context, index) {
-                                final u = _users[index];
-                                return _buildUserTile(u);
-                              },
-                            ),
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.red.shade200),
                           ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.error_outline_rounded, color: Colors.red, size: 32),
+                              const SizedBox(height: 8),
+                              Text(
+                                _errorMessage!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 12),
+                              ElevatedButton.icon(
+                                icon: const Icon(Icons.refresh, size: 16),
+                                label: const Text('Retry'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed: _loadUsers,
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : _allUsers.isEmpty
+                        ? const Center(
+                            child: Text('No registered users found in the system.', style: TextStyle(color: Colors.grey)),
+                          )
+                        : displayUsers.isEmpty
+                            ? const Center(
+                                child: Text('No users match your criteria.', style: TextStyle(color: Colors.grey)),
+                              )
+                            : Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(12),
+                                  boxShadow: [
+                                    BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 8, offset: const Offset(0, 2)),
+                                  ],
+                                ),
+                                child: ListView.separated(
+                                  itemCount: displayUsers.length,
+                                  separatorBuilder: (_, _) => const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                                  itemBuilder: (context, index) {
+                                    final u = displayUsers[index];
+                                    return _buildUserTile(u);
+                                  },
+                                ),
+                              ),
           ),
         ],
       ),

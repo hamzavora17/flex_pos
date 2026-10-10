@@ -95,7 +95,6 @@ class AdminOverviewView extends StatelessWidget {
       );
     }
 
-    final bMetrics = stats?.businessMetrics;
     final uMetrics = stats?.userMetrics;
     final rMetrics = stats?.revenueMetrics;
 
@@ -171,10 +170,11 @@ class AdminOverviewView extends StatelessWidget {
                 children: [
                   _buildKpiCard(
                     width: (width - (crossAxisCount - 1) * 16) / crossAxisCount,
-                    title: 'Total Businesses',
-                    value: '${bMetrics?.total ?? 0}',
-                    subtitle: '${bMetrics?.active ?? 0} Active • ${bMetrics?.inactive ?? 0} Inactive',
-                    badgeText: '+${bMetrics?.createdToday ?? 0} today',
+                    title: 'FlexPOS Store',
+                    value: 'FlexPOS',
+                    subtitle: 'Main Business Unit • Active',
+                    badgeText: 'ONLINE',
+                    badgeColor: Colors.green,
                     icon: Icons.store,
                     color: Colors.blue.shade700,
                   ),

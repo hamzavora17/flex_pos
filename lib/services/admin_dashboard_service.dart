@@ -88,19 +88,22 @@ class AdminDashboardService {
     try {
       var query = c
           .from('activity_logs')
-          .select('*, businesses(business_name), profiles(full_name, email)');
+          .select('*, businesses(name), profiles(full_name, email)');
 
       if (typeFilter != null && typeFilter != 'all' && typeFilter.isNotEmpty) {
         query = query.eq('type', typeFilter);
       }
 
-      final response = await query
+      final dynamic response = await query
           .order('created_at', ascending: false)
           .range(offset, offset + limit - 1);
 
-      return (response as List<dynamic>)
-          .map((json) => AdminActivityLog.fromMap(json as Map<String, dynamic>))
-          .toList();
+      if (response is List) {
+        return response
+            .map((json) => AdminActivityLog.fromMap(Map<String, dynamic>.from(json as Map)))
+            .toList();
+      }
+      return [];
     } catch (e) {
       debugPrint('[AdminDashboardService] Error fetching activity logs: $e');
       return [];
@@ -122,8 +125,8 @@ class AdminDashboardService {
         query = query.eq('status', statusFilter);
       }
 
-      final response = await query.order('created_at', ascending: false);
-      final list = (response as List<dynamic>);
+      final dynamic response = await query.order('created_at', ascending: false);
+      final List<dynamic> list = response is List ? response : [];
 
       final todayStart = DateTime.now().toUtc().copyWith(hour: 0, minute: 0, second: 0, millisecond: 0);
       final monthStart = DateTime.now().toUtc().copyWith(day: 1, hour: 0, minute: 0, second: 0, millisecond: 0);
@@ -285,7 +288,7 @@ class AdminDashboardService {
     }
   }
 
-  /// Registers a new business unit.
+  /// Registers a new business unit (Disabled in single-business mode).
   Future<void> createBusiness({
     required String name,
     String? ownerId,
@@ -293,20 +296,7 @@ class AdminDashboardService {
     String? phone,
     String? address,
   }) async {
-    final c = client;
-    if (c == null) throw const FlexPOSException('Supabase not configured');
-
-    try {
-      await c.rpc('create_business_by_admin', params: {
-        'p_business_name': name.trim(),
-        'p_owner_id': ownerId,
-        'p_email': email?.trim(),
-        'p_phone': phone?.trim(),
-        'p_address': address?.trim(),
-      });
-    } catch (e) {
-      throw FlexPOSException('Failed to create business: $e');
-    }
+    throw const FlexPOSException('FlexPOS operates exclusively as a single-business application. Additional business creation is disabled.');
   }
 
   /// Fetches system settings list.
@@ -315,10 +305,13 @@ class AdminDashboardService {
     if (c == null) return [];
 
     try {
-      final response = await c.from('system_settings').select().order('key');
-      return (response as List<dynamic>)
-          .map((json) => SystemSettingModel.fromMap(json as Map<String, dynamic>))
-          .toList();
+      final dynamic response = await c.from('system_settings').select().order('key');
+      if (response is List) {
+        return response
+            .map((json) => SystemSettingModel.fromMap(Map<String, dynamic>.from(json as Map)))
+            .toList();
+      }
+      return [];
     } catch (e) {
       debugPrint('[AdminDashboardService] Error fetching system settings: $e');
       return [];
@@ -348,18 +341,56 @@ class AdminDashboardService {
     String roleFilter = 'all',
   }) async {
     final c = client;
-    if (c == null) return [];
+    if (c == null) {
+      throw const FlexPOSException('Supabase is not configured.');
+    }
 
     try {
-      var query = c.from('profiles').select('*, employees(*, businesses(business_name))');
+      var query = c.from('profiles').select('*, employees(*, businesses(*))');
 
       if (roleFilter != 'all' && roleFilter.isNotEmpty) {
-        query = query.eq('role', roleFilter);
+        if (roleFilter == 'cashier') {
+          query = query.inFilter('role', ['cashier', 'employee']);
+        } else {
+          query = query.eq('role', roleFilter);
+        }
       }
 
-      final response = await query.order('created_at', ascending: false);
-      final list = (response as List<dynamic>)
-          .map((json) => AdminUserSummary.fromMap(json as Map<String, dynamic>))
+      final dynamic response = await query.order('created_at', ascending: false);
+
+      final List<dynamic> rawList;
+      if (response is List) {
+        rawList = response;
+      } else if (response is Map) {
+        final map = Map<String, dynamic>.from(response);
+        if (map['data'] is List) {
+          rawList = map['data'] as List;
+        } else if (map['users'] is List) {
+          rawList = map['users'] as List;
+        } else if (map['profiles'] is List) {
+          rawList = map['profiles'] as List;
+        } else if (map['results'] is List) {
+          rawList = map['results'] as List;
+        } else if (map['result'] is List) {
+          rawList = map['result'] as List;
+        } else if (map.containsKey('id') || map.containsKey('email') || map.containsKey('role') || map.containsKey('full_name')) {
+          rawList = [map];
+        } else if (map.containsKey('error') || map.containsKey('message')) {
+          final msg = map['message']?.toString() ?? map['error']?.toString() ?? 'Database query error';
+          throw FlexPOSException('Failed to load user list: $msg');
+        } else {
+          debugPrint('[AdminDashboardService] Unrecognized map response structure for admin users: $map');
+          rawList = [];
+        }
+      } else if (response == null) {
+        rawList = [];
+      } else {
+        debugPrint('[AdminDashboardService] Unexpected response type for admin users: ${response.runtimeType}');
+        rawList = [];
+      }
+
+      final list = rawList
+          .map((json) => AdminUserSummary.fromMap(Map<String, dynamic>.from(json as Map)))
           .toList();
 
       if (searchQuery != null && searchQuery.trim().isNotEmpty) {
@@ -373,9 +404,13 @@ class AdminDashboardService {
       }
 
       return list;
+    } on PostgrestException catch (e) {
+      debugPrint('[AdminDashboardService] Postgrest error fetching admin users: ${e.message}');
+      throw FlexPOSException('Failed to load user list: ${e.message}');
     } catch (e) {
       debugPrint('[AdminDashboardService] Error fetching admin users: $e');
-      return [];
+      if (e is FlexPOSException) rethrow;
+      throw FlexPOSException('An error occurred while loading users: $e');
     }
   }
 
