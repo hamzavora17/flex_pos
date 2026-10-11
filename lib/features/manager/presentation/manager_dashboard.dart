@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/config/supabase_config.dart';
+import '../../../core/theme/app_logo_widget.dart';
+import '../../../core/theme/app_name_controller.dart';
 import '../../../core/theme/theme_helper.dart';
 import '../../../core/theme/theme_toggle_button.dart';
 import '../../../core/utils/currency_formatter.dart';
@@ -703,18 +705,13 @@ class _ManagerDashboardState extends State<ManagerDashboard> with WidgetsBinding
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: Image.asset(
-                    'assets/FlexPOS_logo_upscaled.png',
-                    height: 22,
-                    errorBuilder: (_, _, _) => const Icon(Icons.store_rounded, size: 20, color: Color(0xFF003366)),
-                  ),
+                  child: const AppLogoWidget(height: 22),
                 ),
                 const SizedBox(width: 12),
                 const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'FlexPOS',
+                    AppNameText(
                       style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18, letterSpacing: 0.5),
                     ),
                     Text(

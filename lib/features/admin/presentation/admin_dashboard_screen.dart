@@ -9,7 +9,8 @@ import '../../../services/admin_dashboard_service.dart';
 import '../../../services/admin_user_service.dart';
 import '../../../services/exceptions.dart';
 import '../../../main.dart';
-import 'admin_business_units_view.dart';
+import '../../../core/theme/app_logo_widget.dart';
+import '../../../core/theme/app_name_controller.dart';
 import 'admin_overview_view.dart';
 import 'admin_settings_view.dart';
 import 'admin_system_health_view.dart';
@@ -353,15 +354,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Image.asset(
-                  'assets/FlexPOS_logo_upscaled.png',
-                  height: 24,
-                  errorBuilder: (_, _, _) => const Icon(Icons.store, size: 20, color: Color(0xFF1E293B)),
-                ),
+                child: const AppLogoWidget(height: 24),
               ),
               const SizedBox(width: 12),
             ],
-            const Text('FlexPOS Admin Control Center', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            const AppNameText(suffix: ' Admin Control Center', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
           ],
         ),
         backgroundColor: const Color(0xFF1E293B),
@@ -425,15 +422,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Image.asset(
-                  'assets/FlexPOS_logo_upscaled.png',
-                  height: 28,
-                  errorBuilder: (_, _, _) => const Icon(Icons.store, size: 24, color: Color(0xFF1E293B)),
-                ),
+                child: const AppLogoWidget(height: 28),
               ),
               const SizedBox(width: 12),
-              const Text(
-                'FlexPOS',
+              const AppNameText(
                 style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
               ),
             ],
@@ -442,12 +434,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         const Divider(color: Colors.white10, height: 1),
         const SizedBox(height: 16),
         _buildSidebarItem(0, Icons.dashboard, 'Overview'),
-        _buildSidebarItem(1, Icons.business, 'Business Unit'),
-        _buildSidebarItem(2, Icons.people, 'User Management'),
-        _buildSidebarItem(3, Icons.settings, 'System Settings'),
-        _buildSidebarItem(4, Icons.health_and_safety, 'System Health'),
+        _buildSidebarItem(1, Icons.people, 'User Management'),
+        _buildSidebarItem(2, Icons.settings, 'System Settings'),
+        _buildSidebarItem(3, Icons.health_and_safety, 'System Health'),
         const Spacer(),
-        _buildSidebarItem(5, Icons.help_outline, 'Support'),
+        _buildSidebarItem(4, Icons.help_outline, 'Support'),
         const SizedBox(height: 24),
       ],
     );
@@ -491,22 +482,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           chartPeriod: _chartPeriod,
           onChartPeriodChanged: _onChartPeriodChanged,
           onRefresh: () => _loadAllDashboardData(),
-          onAssignRoleRequested: () => _showAssignRoleDialog(context),
           isLoading: _isLoading,
           errorMessage: _errorMessage,
         );
       case 1:
-        return AdminBusinessUnitsView(adminService: _adminService);
-      case 2:
         return AdminUserManagementView(
           adminService: _adminService,
           onAssignRoleRequested: () => _showAssignRoleDialog(context),
         );
-      case 3:
+      case 2:
         return AdminSettingsView(adminService: _adminService);
-      case 4:
+      case 3:
         return AdminSystemHealthView(adminService: _adminService, stats: _stats);
-      case 5:
+      case 4:
         return _buildSupportView();
       default:
         return AdminOverviewView(
@@ -516,7 +504,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           chartPeriod: _chartPeriod,
           onChartPeriodChanged: _onChartPeriodChanged,
           onRefresh: () => _loadAllDashboardData(),
-          onAssignRoleRequested: () => _showAssignRoleDialog(context),
           isLoading: _isLoading,
           errorMessage: _errorMessage,
         );

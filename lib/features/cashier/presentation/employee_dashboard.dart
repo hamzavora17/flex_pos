@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/config/supabase_config.dart';
+import '../../../core/theme/app_logo_widget.dart';
+import '../../../core/theme/app_name_controller.dart';
 import '../../../core/theme/theme_helper.dart';
 import '../../../core/theme/theme_toggle_button.dart';
 import '../../../core/utils/currency_formatter.dart';
@@ -668,19 +670,15 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Image.asset(
-                  'assets/FlexPOS_logo_upscaled.png',
-                  height: 28,
-                  errorBuilder: (_, _, _) => const Icon(Icons.storefront, color: Color(0xFF003366), size: 24),
-                ),
+                child: const AppLogoWidget(height: 28),
               ),
               const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
-                    'FlexPOS Terminal',
+                  const AppNameText(
+                    suffix: ' Terminal',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 17,

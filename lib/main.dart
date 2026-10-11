@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/config/supabase_config.dart';
+import 'core/theme/app_logo_widget.dart';
+import 'core/theme/app_name_controller.dart';
 import 'core/theme/theme_controller.dart';
 import 'core/theme/theme_toggle_button.dart';
 
@@ -194,11 +196,9 @@ class _SplashScreenState extends State<SplashScreen> {
           children: [
             Hero(
               tag: 'app_logo',
-              child: Image.asset(
-                'assets/FlexPOS_logo_upscaled.png',
+              child: const AppLogoWidget(
                 width: logoSize,
                 height: logoSize,
-                fit: BoxFit.contain,
               ),
             ),
             const SizedBox(height: 32),
@@ -485,11 +485,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           Center(
             child: Hero(
               tag: 'app_logo',
-              child: Image.asset(
-                'assets/FlexPOS_logo_upscaled.png',
+              child: const AppLogoWidget(
                 height: 48,
-                fit: BoxFit.contain,
-                errorBuilder: (_, _, _) => const Icon(Icons.storefront_rounded, size: 48, color: Color(0xFF003366)),
               ),
             ),
           ),
@@ -978,26 +975,8 @@ class _BrandPanel extends StatelessWidget {
                   ),
                   child: Hero(
                     tag: 'app_logo',
-                    child: Image.asset(
-                      'assets/FlexPOS_logo_upscaled.png',
+                    child: const AppLogoWidget(
                       height: 52,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) => Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          Icon(Icons.storefront_rounded, color: Color(0xFF003366), size: 40),
-                          SizedBox(width: 12),
-                          Text(
-                            'FlexPOS',
-                            style: TextStyle(
-                              color: Color(0xFF003366),
-                              fontSize: 28,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: -1,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
                   ),
                 ),
@@ -1202,14 +1181,10 @@ class HomePage extends StatelessWidget {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: Image.asset(
-                'assets/FlexPOS_logo_upscaled.png',
-                height: 24,
-                errorBuilder: (_, _, _) => const Icon(Icons.store, size: 20, color: Color(0xFF003366)),
-              ),
+              child: const AppLogoWidget(height: 24),
             ),
             const SizedBox(width: 12),
-            const Text('FlexPOS Home', style: TextStyle(fontWeight: FontWeight.bold)),
+            const AppNameText(suffix: ' Home', style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
         backgroundColor: const Color(0xFF003366),

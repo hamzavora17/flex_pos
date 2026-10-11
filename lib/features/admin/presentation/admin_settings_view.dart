@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_logo_controller.dart';
+import '../../../core/theme/app_logo_widget.dart';
+import '../../../core/theme/app_name_controller.dart';
+import '../../../core/utils/image_picker_helper.dart';
 import '../../../services/admin_dashboard_service.dart';
 
 /// Functional System Settings management view backed by `public.system_settings`.
@@ -20,6 +24,7 @@ class _AdminSettingsViewState extends State<AdminSettingsView> {
   bool _allowDiscounts = true;
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isPickingImage = false;
   String? _errorMessage;
 
   @override
@@ -54,8 +59,8 @@ class _AdminSettingsViewState extends State<AdminSettingsView> {
       }
 
       // Ensure defaults if empty
-      _controllers.putIfAbsent('currency_symbol', () => TextEditingController(text: '₹'));
-      _controllers.putIfAbsent('default_tax_rate', () => TextEditingController(text: '0.00'));
+      _controllers.putIfAbsent('app_logo_url', () => TextEditingController(text: AppLogoController.instance.value));
+      _controllers.putIfAbsent('app_name', () => TextEditingController(text: AppNameController.instance.value));
       _controllers.putIfAbsent('min_stock_alert_threshold', () => TextEditingController(text: '5'));
       _controllers.putIfAbsent('receipt_header_text', () => TextEditingController(text: 'Thank you for shopping with FlexPOS!'));
       _controllers.putIfAbsent('auto_lock_shift_hours', () => TextEditingController(text: '12'));
@@ -73,12 +78,54 @@ class _AdminSettingsViewState extends State<AdminSettingsView> {
     }
   }
 
+  Future<void> _pickImageFromGallery() async {
+    setState(() => _isPickingImage = true);
+
+    try {
+      final base64String = await ImagePickerHelper.pickImageAsBase64();
+
+      if (base64String != null && base64String.isNotEmpty) {
+        setState(() {
+          _controllers['app_logo_url']?.text = base64String;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Photo loaded from gallery! Click "Save Settings" to apply globally across the app.'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to select photo: $e'),
+            backgroundColor: Colors.red[800],
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingImage = false);
+      }
+    }
+  }
+
   Future<void> _saveSettings() async {
     setState(() => _isSaving = true);
 
     try {
-      await widget.adminService.updateSystemSetting('currency_symbol', _controllers['currency_symbol']?.text ?? '₹');
-      await widget.adminService.updateSystemSetting('default_tax_rate', _controllers['default_tax_rate']?.text ?? '0.00');
+      final logoVal = _controllers['app_logo_url']?.text.trim() ?? '';
+      await widget.adminService.updateSystemSetting('app_logo_url', logoVal);
+      await AppLogoController.instance.updateLogo(logoVal);
+
+      final rawAppName = _controllers['app_name']?.text.trim() ?? '';
+      final appNameVal = rawAppName.isEmpty ? 'FlexPOS' : rawAppName;
+      await widget.adminService.updateSystemSetting('app_name', appNameVal);
+      await AppNameController.instance.updateName(appNameVal);
+
       await widget.adminService.updateSystemSetting('allow_cashier_discounts', _allowDiscounts ? 'true' : 'false');
       await widget.adminService.updateSystemSetting('min_stock_alert_threshold', _controllers['min_stock_alert_threshold']?.text ?? '5');
       await widget.adminService.updateSystemSetting('receipt_header_text', _controllers['receipt_header_text']?.text ?? '');
@@ -88,7 +135,7 @@ class _AdminSettingsViewState extends State<AdminSettingsView> {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('System settings successfully saved and updated in database!'),
+            content: const Text('System settings, store name, and logo successfully saved!'),
             backgroundColor: Colors.green[800],
           ),
         );
@@ -125,7 +172,7 @@ class _AdminSettingsViewState extends State<AdminSettingsView> {
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                   ),
                   const SizedBox(height: 4),
-                  Text('System-wide operational parameters, currency defaults, and security policies', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                  Text('System-wide operational parameters, store name, logo branding, and security policies', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
                 ],
               ),
               ElevatedButton.icon(
@@ -162,33 +209,146 @@ class _AdminSettingsViewState extends State<AdminSettingsView> {
                         ),
                         child: ListView(
                           children: [
-                            const Text('Currency & Financial Defaults', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                            // Application Branding & Logo
+                            const Text(
+                              'Application Logo & Branding',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                            ),
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                              ),
+                              child: Row(
+                                children: [
+                                  // Clickable Logo Preview Box
+                                  Tooltip(
+                                    message: 'Click to select image from gallery',
+                                    child: InkWell(
+                                      onTap: _isPickingImage ? null : _pickImageFromGallery,
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          Container(
+                                            width: 110,
+                                            height: 110,
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius: BorderRadius.circular(12),
+                                              border: Border.all(color: const Color(0xFFCBD5E1), width: 1.5),
+                                            ),
+                                            child: Center(
+                                              child: _isPickingImage
+                                                  ? const CircularProgressIndicator()
+                                                  : AppLogoWidget(
+                                                      key: ValueKey(_controllers['app_logo_url']?.text),
+                                                      height: 85,
+                                                    ),
+                                            ),
+                                          ),
+                                          Positioned(
+                                            right: 4,
+                                            bottom: 4,
+                                            child: Container(
+                                              padding: const EdgeInsets.all(4),
+                                              decoration: const BoxDecoration(
+                                                color: Color(0xFF003366),
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: const Icon(Icons.add_a_photo, size: 14, color: Colors.white),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 20),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        TextFormField(
+                                          controller: _controllers['app_logo_url'],
+                                          decoration: InputDecoration(
+                                            labelText: 'Application Logo Source (URL / Asset Path / Base64)',
+                                            hintText: 'e.g. assets/FlexPOS_logo_upscaled.png or https://example.com/logo.png',
+                                            border: const OutlineInputBorder(),
+                                            prefixIcon: const Icon(Icons.image_outlined),
+                                            suffixIcon: IconButton(
+                                              icon: const Icon(Icons.clear, size: 18),
+                                              onPressed: () {
+                                                setState(() {
+                                                  _controllers['app_logo_url']?.clear();
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                          onChanged: (_) {
+                                            setState(() {}); // refresh live preview
+                                          },
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Wrap(
+                                          spacing: 10,
+                                          runSpacing: 10,
+                                          crossAxisAlignment: WrapCrossAlignment.center,
+                                          children: [
+                                            ElevatedButton.icon(
+                                              icon: _isPickingImage
+                                                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                                  : const Icon(Icons.photo_library, size: 18),
+                                              label: const Text('Choose Photo from Gallery'),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: const Color(0xFF003366),
+                                                foregroundColor: Colors.white,
+                                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                              ),
+                                              onPressed: _isPickingImage ? null : _pickImageFromGallery,
+                                            ),
+                                            OutlinedButton.icon(
+                                              icon: const Icon(Icons.restore, size: 16),
+                                              label: const Text('Default Logo'),
+                                              onPressed: () {
+                                                setState(() {
+                                                  _controllers['app_logo_url']?.text = 'assets/FlexPOS_logo_upscaled.png';
+                                                });
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                             const SizedBox(height: 16),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextFormField(
-                                    controller: _controllers['currency_symbol'],
-                                    decoration: const InputDecoration(
-                                      labelText: 'Default Currency Symbol',
-                                      border: OutlineInputBorder(),
-                                      prefixIcon: Icon(Icons.currency_exchange),
-                                    ),
-                                  ),
+
+                            // Store Display Name Field (Under Logo Change Box)
+                            TextFormField(
+                              controller: _controllers['app_name'],
+                              decoration: InputDecoration(
+                                labelText: 'Application / Store Display Name',
+                                hintText: 'FlexPOS',
+                                helperText: 'Defaults to "FlexPOS" if left blank.',
+                                border: const OutlineInputBorder(),
+                                prefixIcon: const Icon(Icons.edit_note),
+                                suffixIcon: IconButton(
+                                  icon: const Icon(Icons.clear, size: 18),
+                                  onPressed: () {
+                                    setState(() {
+                                      _controllers['app_name']?.clear();
+                                    });
+                                  },
                                 ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: TextFormField(
-                                    controller: _controllers['default_tax_rate'],
-                                    decoration: const InputDecoration(
-                                      labelText: 'Default Tax Rate (%)',
-                                      border: OutlineInputBorder(),
-                                      prefixIcon: Icon(Icons.percent),
-                                    ),
-                                    keyboardType: TextInputType.number,
-                                  ),
-                                ),
-                              ],
+                              ),
+                              onChanged: (_) => setState(() {}),
                             ),
                             const Divider(height: 40),
 
@@ -198,7 +358,7 @@ class _AdminSettingsViewState extends State<AdminSettingsView> {
                               title: const Text('Allow Cashier Manual Discounts', style: TextStyle(fontWeight: FontWeight.w600)),
                               subtitle: const Text('Permits cashiers to enter manual custom discounts during checkout'),
                               value: _allowDiscounts,
-                              activeColor: const Color(0xFF003366),
+                              activeThumbColor: const Color(0xFF003366),
                               onChanged: (val) => setState(() => _allowDiscounts = val),
                             ),
                             const SizedBox(height: 16),

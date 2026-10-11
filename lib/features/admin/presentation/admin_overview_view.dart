@@ -12,7 +12,6 @@ class AdminOverviewView extends StatelessWidget {
   final String chartPeriod;
   final ValueChanged<String> onChartPeriodChanged;
   final VoidCallback onRefresh;
-  final VoidCallback onAssignRoleRequested;
   final bool isLoading;
   final String? errorMessage;
 
@@ -24,7 +23,6 @@ class AdminOverviewView extends StatelessWidget {
     required this.chartPeriod,
     required this.onChartPeriodChanged,
     required this.onRefresh,
-    required this.onAssignRoleRequested,
     this.isLoading = false,
     this.errorMessage,
   });
@@ -133,26 +131,10 @@ class AdminOverviewView extends StatelessWidget {
                   ),
                 ],
               ),
-              Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    tooltip: 'Refresh Analytics',
-                    onPressed: onRefresh,
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.manage_accounts, size: 18),
-                    label: const Text('Assign Manager / Role'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF003366),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                    onPressed: onAssignRoleRequested,
-                  ),
-                ],
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh Analytics',
+                onPressed: onRefresh,
               ),
             ],
           ),
