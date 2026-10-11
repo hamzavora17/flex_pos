@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/config/supabase_config.dart';
+import 'core/theme/theme_controller.dart';
+import 'core/theme/theme_toggle_button.dart';
 
 import 'features/admin/presentation/admin_dashboard_screen.dart';
 import 'features/cashier/presentation/new_sale_screen.dart';
@@ -22,19 +24,66 @@ class FlexPOSApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'FlexPOS',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF003366),
-          primary: const Color(0xFF003366),
-          secondary: const Color(0xFF8DB600),
-        ),
-        useMaterial3: true,
-        fontFamily: 'Inter',
-      ),
-      home: const SplashScreen(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.instance,
+      builder: (context, themeMode, _) {
+        return MaterialApp(
+          title: 'FlexPOS',
+          debugShowCheckedModeBanner: false,
+          themeMode: themeMode,
+          theme: ThemeData(
+            brightness: Brightness.light,
+            colorScheme: ColorScheme.fromSeed(
+              brightness: Brightness.light,
+              seedColor: const Color(0xFF003366),
+              primary: const Color(0xFF003366),
+              secondary: const Color(0xFF8DB600),
+              surface: Colors.white,
+            ),
+            scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+            cardTheme: const CardThemeData(
+              color: Colors.white,
+              elevation: 0,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Colors.white,
+            ),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Color(0xFF003366),
+              foregroundColor: Colors.white,
+              elevation: 0,
+            ),
+            useMaterial3: true,
+            fontFamily: 'Inter',
+          ),
+          darkTheme: ThemeData(
+            brightness: Brightness.dark,
+            colorScheme: ColorScheme.fromSeed(
+              brightness: Brightness.dark,
+              seedColor: const Color(0xFF003366),
+              primary: const Color(0xFF38BDF8),
+              secondary: const Color(0xFF8DB600),
+              surface: const Color(0xFF1E293B),
+            ),
+            scaffoldBackgroundColor: const Color(0xFF0F172A),
+            cardTheme: const CardThemeData(
+              color: Color(0xFF1E293B),
+              elevation: 0,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Color(0xFF1E293B),
+            ),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Color(0xFF020617),
+              foregroundColor: Colors.white,
+              elevation: 0,
+            ),
+            useMaterial3: true,
+            fontFamily: 'Inter',
+          ),
+          home: const SplashScreen(),
+        );
+      },
     );
   }
 }
@@ -377,38 +426,47 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isDesktop = constraints.maxWidth > 900;
-          return Row(
-            children: [
-              if (isDesktop)
-                const Expanded(
-                  flex: 11,
-                  child: _BrandPanel(),
-                ),
-              Expanded(
-                flex: 9,
-                child: Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
-                    child: FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: SlideTransition(
-                        position: _slideAnimation,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 440),
-                          child: _buildLoginForm(isDesktop),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      body: Stack(
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isDesktop = constraints.maxWidth > 900;
+              return Row(
+                children: [
+                  if (isDesktop)
+                    const Expanded(
+                      flex: 11,
+                      child: _BrandPanel(),
+                    ),
+                  Expanded(
+                    flex: 9,
+                    child: Center(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+                        child: FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: SlideTransition(
+                            position: _slideAnimation,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 440),
+                              child: _buildLoginForm(isDesktop),
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-            ],
-          );
-        },
+                ],
+              );
+            },
+          ),
+          const Positioned(
+            top: 16,
+            right: 16,
+            child: ThemeToggleButton(color: Color(0xFF003366)),
+          ),
+        ],
       ),
     );
   }

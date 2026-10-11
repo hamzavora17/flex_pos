@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/theme_helper.dart';
+import '../../../core/theme/theme_toggle_button.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../models/completed_sale_model.dart';
 import '../../../models/return_model.dart';
+import '../../../services/receipt_printer_service.dart';
 import '../../../services/return_service.dart';
 import '../../../services/sale_service.dart';
 
@@ -21,6 +24,29 @@ class ReturnsRefundsScreen extends StatefulWidget {
 class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
   final SaleService _saleService = SaleService();
   final ReturnService _returnService = ReturnService();
+
+  Future<void> _printReceipt(ReturnReceiptModel receipt) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Preparing return receipt for POS printing...'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    try {
+      await ReceiptPrinterService.printReturnReceipt(receipt);
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Failed to print receipt: $e'),
+            backgroundColor: Colors.red[800],
+          ),
+        );
+      }
+    }
+  }
 
   int _selectedTab = 0; // 0 = Eligible Sales, 1 = Return History
   bool _isLoading = true;
@@ -129,9 +155,13 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
     // Initialize return selection state ONLY for products with remaining returnable quantity > 0
     final selections = <ReturnItemSelection>[];
     for (var item in sale.items) {
-      final pid = item.productId ?? item.id;
+      final pid = (item.productId != null && item.productId!.isNotEmpty && item.productId != 'null')
+          ? item.productId!
+          : item.id;
       final name = item.productNameSnapshot ?? item.productName ?? 'Product';
-      final alreadyReturned = returnedMap[pid] ?? 0;
+      final byProdId = (item.productId != null && item.productId!.isNotEmpty) ? (returnedMap[item.productId] ?? 0) : 0;
+      final byItemId = returnedMap[item.id] ?? 0;
+      final alreadyReturned = byProdId > byItemId ? byProdId : byItemId;
       final remainingQty = item.quantity - alreadyReturned;
 
       if (remainingQty > 0) {
@@ -474,7 +504,7 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
           width: 440,
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: ctx.surfaceCard,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
@@ -484,25 +514,25 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF003366).withValues(alpha: 0.05),
+                  color: const Color(0xFF003366).withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.receipt_long_rounded, color: Color(0xFF003366), size: 36),
               ),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 'FLEXPOS RETURN RECEIPT',
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 1.0, color: Color(0xFF0F172A)),
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 1.0, color: ctx.textPrimary),
               ),
               const SizedBox(height: 4),
-              const Text('Official Refund & Inventory Restoration Record', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-              const Divider(height: 24, thickness: 1),
+              Text('Official Refund & Inventory Restoration Record', style: TextStyle(fontSize: 11, color: ctx.textSecondary)),
+              Divider(height: 24, thickness: 1, color: ctx.border),
 
               // Metadata Table
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Return Receipt #:', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                  Text('Return Receipt #:', style: TextStyle(fontSize: 12, color: ctx.textSecondary)),
                   Text('#$shortReturnId', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF003366))),
                 ],
               ),
@@ -510,40 +540,40 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Original Invoice #:', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-                  Text('#${receipt.originalInvoiceNumber}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text('Original Invoice #:', style: TextStyle(fontSize: 12, color: ctx.textSecondary)),
+                  Text('#${receipt.originalInvoiceNumber}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: ctx.textPrimary)),
                 ],
               ),
               const SizedBox(height: 6),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Return Date & Time:', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-                  Text(formattedDate, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text('Return Date & Time:', style: TextStyle(fontSize: 12, color: ctx.textSecondary)),
+                  Text(formattedDate, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: ctx.textPrimary)),
                 ],
               ),
               const SizedBox(height: 6),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Refund Method:', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-                  Text(receipt.paymentMethod.toUpperCase(), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text('Refund Method:', style: TextStyle(fontSize: 12, color: ctx.textSecondary)),
+                  Text(receipt.paymentMethod.toUpperCase(), style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: ctx.textPrimary)),
                 ],
               ),
-              const Divider(height: 20, thickness: 1),
+              Divider(height: 20, thickness: 1, color: ctx.border),
 
               // Returned Items Table
-              const Align(
+              Align(
                 alignment: Alignment.centerLeft,
-                child: Text('RETURNED PRODUCTS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF64748B), letterSpacing: 0.5)),
+                child: Text('RETURNED PRODUCTS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: ctx.textSecondary, letterSpacing: 0.5)),
               ),
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: ctx.inputBg,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: ctx.border),
                 ),
                 child: Column(
                   children: receipt.returnedItems.map((item) {
@@ -556,8 +586,8 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(item.productName, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                                Text('${item.selectedQuantity}x @ ${CurrencyFormatter.format(item.unitPrice)}', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                                Text(item.productName, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: ctx.textPrimary)),
+                                Text('${item.selectedQuantity}x @ ${CurrencyFormatter.format(item.unitPrice)}', style: TextStyle(fontSize: 11, color: ctx.textSecondary)),
                               ],
                             ),
                           ),
@@ -568,13 +598,13 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                   }).toList(),
                 ),
               ),
-              const Divider(height: 20, thickness: 1),
+              Divider(height: 20, thickness: 1, color: ctx.border),
 
               // Total Refund Issued
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('TOTAL REFUND ISSUED:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
+                  Text('TOTAL REFUND ISSUED:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: ctx.textPrimary)),
                   Text(
                     CurrencyFormatter.format(receipt.refundAmount),
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF8DB600)),
@@ -605,11 +635,7 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
           TextButton.icon(
             icon: const Icon(Icons.print_outlined, size: 16),
             label: const Text('Print Receipt'),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Sending return receipt to POS receipt printer...')),
-              );
-            },
+            onPressed: () => _printReceipt(receipt),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -631,10 +657,10 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.scaffoldBg,
       appBar: AppBar(
         toolbarHeight: 52,
-        backgroundColor: const Color(0xFF003366),
+        backgroundColor: context.headerBg,
         foregroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
@@ -671,12 +697,16 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
             ),
           ],
         ),
+        actions: const [
+          ThemeToggleButton(),
+          SizedBox(width: 8),
+        ],
       ),
       body: Column(
         children: [
           // Tab Selection Bar
           Container(
-            color: Colors.white,
+            color: context.surfaceCard,
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             child: Row(
               children: [
@@ -711,35 +741,35 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
           if (_selectedTab == 0)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0), width: 1)),
+              decoration: BoxDecoration(
+                color: context.surfaceCard,
+                border: Border(bottom: BorderSide(color: context.border, width: 1)),
               ),
               child: SizedBox(
                 height: 44,
                 child: TextField(
                   controller: _searchController,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: context.textPrimary),
                   decoration: InputDecoration(
                     hintText: 'Search sales by invoice number, product or SKU...',
-                    hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                    hintStyle: TextStyle(color: context.textSecondary, fontSize: 13),
                     prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF003366), size: 20),
                     suffixIcon: _searchController.text.isNotEmpty
                         ? IconButton(
-                            icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF64748B)),
+                            icon: Icon(Icons.close_rounded, size: 18, color: context.textSecondary),
                             onPressed: () => _searchController.clear(),
                           )
                         : null,
                     filled: true,
-                    fillColor: const Color(0xFFF8FAFC),
+                    fillColor: context.inputBg,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      borderSide: BorderSide(color: context.border),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      borderSide: BorderSide(color: context.border),
                     ),
                   ),
                 ),
@@ -784,8 +814,9 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
     final eligibleSales = _sales.where((sale) {
       final returnedMap = _saleReturnedQtyMap[sale.id] ?? {};
       final hasReturnableQty = sale.items.any((item) {
-        final pid = item.productId ?? item.id;
-        final returned = returnedMap[pid] ?? 0;
+        final byProdId = (item.productId != null && item.productId!.isNotEmpty) ? (returnedMap[item.productId] ?? 0) : 0;
+        final byItemId = returnedMap[item.id] ?? 0;
+        final returned = byProdId > byItemId ? byProdId : byItemId;
         return (item.quantity - returned) > 0;
       });
       return hasReturnableQty;
@@ -825,14 +856,16 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
 
         // Only include items that have remainingReturnableQty > 0
         final returnableItems = sale.items.where((item) {
-          final pid = item.productId ?? item.id;
-          final retQty = returnedMap[pid] ?? 0;
+          final byProdId = (item.productId != null && item.productId!.isNotEmpty) ? (returnedMap[item.productId] ?? 0) : 0;
+          final byItemId = returnedMap[item.id] ?? 0;
+          final retQty = byProdId > byItemId ? byProdId : byItemId;
           return (item.quantity - retQty) > 0;
         }).toList();
 
         final itemSummaries = returnableItems.map((i) {
-          final pid = i.productId ?? i.id;
-          final retQty = returnedMap[pid] ?? 0;
+          final byProdId = (i.productId != null && i.productId!.isNotEmpty) ? (returnedMap[i.productId] ?? 0) : 0;
+          final byItemId = returnedMap[i.id] ?? 0;
+          final retQty = byProdId > byItemId ? byProdId : byItemId;
           final remQty = i.quantity - retQty;
           final pName = i.productNameSnapshot ?? i.productName ?? 'Product';
 
@@ -840,10 +873,11 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
         }).join(', ');
 
         return Card(
+          color: context.surfaceCard,
           margin: const EdgeInsets.only(bottom: 12),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: Color(0xFFE2E8F0)),
+            side: BorderSide(color: context.border),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -855,13 +889,13 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                     children: [
                       Row(
                         children: [
-                          Text(sale.invoiceNumber, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF0F172A))),
+                          Text(sale.invoiceNumber, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: context.textPrimary)),
                           const SizedBox(width: 10),
                           Text('${sale.itemCount} items • ${CurrencyFormatter.format(sale.total)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF003366))),
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Text(itemSummaries, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(itemSummaries, style: TextStyle(fontSize: 12, color: context.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis),
                     ],
                   ),
                 ),
@@ -919,10 +953,11 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
         final itemSummary = receipt.returnedItems.map((i) => '${i.selectedQuantity}x ${i.productName}').join(', ');
 
         return Card(
+          color: context.surfaceCard,
           margin: const EdgeInsets.only(bottom: 12),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: Color(0xFFE2E8F0)),
+            side: BorderSide(color: context.border),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -934,13 +969,13 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                     children: [
                       Row(
                         children: [
-                          Text('Return #$shortId', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF0F172A))),
+                          Text('Return #$shortId', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: context.textPrimary)),
                           const SizedBox(width: 8),
-                          Text('Original Invoice: #${receipt.originalInvoiceNumber}', style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                          Text('Original Invoice: #${receipt.originalInvoiceNumber}', style: TextStyle(fontSize: 12, color: context.textSecondary)),
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Text(itemSummary, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(itemSummary, style: TextStyle(fontSize: 12, color: context.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis),
                     ],
                   ),
                 ),
@@ -948,16 +983,34 @@ class _ReturnsRefundsScreenState extends State<ReturnsRefundsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(CurrencyFormatter.format(receipt.refundAmount), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8DB600))),
-                    const SizedBox(height: 4),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF003366),
-                        side: const BorderSide(color: Color(0xFF003366)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      icon: const Icon(Icons.receipt_long_rounded, size: 14),
-                      label: const Text('View Receipt'),
-                      onPressed: () => _showReturnReceiptDialog(receipt),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF003366),
+                            side: const BorderSide(color: Color(0xFF003366)),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          ),
+                          icon: const Icon(Icons.receipt_long_rounded, size: 14),
+                          label: const Text('View Receipt'),
+                          onPressed: () => _showReturnReceiptDialog(receipt),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF003366),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          ),
+                          icon: const Icon(Icons.print_outlined, size: 14),
+                          label: const Text('Print Receipt'),
+                          onPressed: () => _printReceipt(receipt),
+                        ),
+                      ],
                     ),
                   ],
                 ),

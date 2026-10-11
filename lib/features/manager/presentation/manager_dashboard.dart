@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/config/supabase_config.dart';
+import '../../../core/theme/theme_helper.dart';
+import '../../../core/theme/theme_toggle_button.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../main.dart';
 import '../../../models/completed_sale_model.dart';
@@ -869,6 +871,10 @@ class _ManagerDashboardState extends State<ManagerDashboard> with WidgetsBinding
           ),
           const Spacer(),
 
+          // Light / Dark Mode Toggle Button
+          const ThemeToggleButton(color: Color(0xFF003366)),
+          const SizedBox(width: 10),
+
           // Manager Profile Badge on Top-Right
           if (!_isProfileLoading)
             Container(
@@ -943,7 +949,7 @@ class _ManagerDashboardState extends State<ManagerDashboard> with WidgetsBinding
         final isDesktop = constraints.maxWidth > 900;
 
         return Scaffold(
-          backgroundColor: const Color(0xFFF8FAFC),
+          backgroundColor: context.scaffoldBg,
           drawer: !isDesktop ? Drawer(child: _buildSidebar(false)) : null,
           body: Row(
             children: [

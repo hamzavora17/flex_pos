@@ -585,7 +585,59 @@ class CashierDashboardService {
     }
 
     if (businessId.isNotEmpty) {
-      // 2. Recent Held Sales (safe against missing held_sales table)
+      // 2. Recent Return & Refund Transactions (safe against missing sale_returns table)
+      try {
+        final returnsRes = await c
+            .from('sale_returns')
+            .select('id, sale_id, refund_amount, payment_method, status, is_damaged, created_at, sales(invoice_number)')
+            .eq('business_id', businessId)
+            .eq('employee_id', userId)
+            .order('created_at', ascending: false)
+            .limit(5);
+
+        for (var ret in (returnsRes as List<dynamic>? ?? [])) {
+          final salesData = ret['sales'] as Map<String, dynamic>?;
+          final inv = salesData?['invoice_number']?.toString() ?? 'SALE';
+          final refAmt = (ret['refund_amount'] is num)
+              ? (ret['refund_amount'] as num).toDouble()
+              : double.tryParse(ret['refund_amount']?.toString() ?? '0.0') ?? 0.0;
+          final pMethodRaw = ret['payment_method']?.toString() ?? 'cash';
+          final method = pMethodRaw.isNotEmpty
+              ? pMethodRaw[0].toUpperCase() + pMethodRaw.substring(1)
+              : 'Cash';
+          final status = ret['status']?.toString() ?? 'approved';
+          final isDamaged = ret['is_damaged'] == true;
+          final createdAtRaw = ret['created_at']?.toString();
+          if (createdAtRaw == null) continue;
+          final createdAt = DateTime.parse(createdAtRaw).toLocal();
+
+          if (status == 'rejected' || isDamaged) {
+            activities.add(RecentActivityModel(
+              id: ret['id'].toString(),
+              title: 'Return Rejected #$inv',
+              details: 'Damaged Goods • Return Rejected',
+              timestamp: createdAt,
+              icon: Icons.assignment_return_outlined,
+              iconColor: Colors.red.shade700,
+              type: 'return',
+            ));
+          } else {
+            activities.add(RecentActivityModel(
+              id: ret['id'].toString(),
+              title: 'Return & Refund #$inv',
+              details: '₹${refAmt.toStringAsFixed(2)} • $method Refund',
+              timestamp: createdAt,
+              icon: Icons.assignment_return_outlined,
+              iconColor: Colors.deepOrange.shade700,
+              type: 'return',
+            ));
+          }
+        }
+      } catch (e) {
+        // Table public.sale_returns may not exist or query failed; ignore gracefully
+      }
+
+      // 3. Recent Held Sales (safe against missing held_sales table)
       try {
         final heldRes = await c
             .from('held_sales')
@@ -769,6 +821,15 @@ class CashierDashboardService {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'held_sales',
+          callback: (payload) => onDataChanged(),
+        );
+      } catch (_) {}
+
+      try {
+        channel.onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'sale_returns',
           callback: (payload) => onDataChanged(),
         );
       } catch (_) {}

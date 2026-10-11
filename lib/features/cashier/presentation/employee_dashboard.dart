@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/config/supabase_config.dart';
+import '../../../core/theme/theme_helper.dart';
+import '../../../core/theme/theme_toggle_button.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../main.dart';
 import '../../../services/cashier_dashboard_service.dart';
@@ -550,7 +552,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.scaffoldBg,
       body: SafeArea(
         child: Column(
           children: [
@@ -753,6 +755,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 ),
               ),
               const SizedBox(width: 12),
+
+              // Light / Dark Theme Toggle
+              const ThemeToggleButton(),
+              const SizedBox(width: 8),
 
               // Profile Avatar
               Tooltip(

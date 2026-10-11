@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/theme/theme_helper.dart';
+import '../../../core/theme/theme_toggle_button.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../models/product_model.dart';
 import '../../../services/business_service.dart';
@@ -418,7 +420,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
     final isDesktop = MediaQuery.of(context).size.width > 900;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.scaffoldBg,
       appBar: AppBar(
         toolbarHeight: 52,
         backgroundColor: const Color(0xFF003366),
@@ -462,6 +464,8 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
           ],
         ),
         actions: [
+          const ThemeToggleButton(),
+          const SizedBox(width: 4),
           if (!isDesktop)
             Builder(
               builder: (ctx) => IconButton(

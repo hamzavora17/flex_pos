@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/theme_helper.dart';
+import '../../../core/theme/theme_toggle_button.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../models/completed_sale_model.dart';
+import '../../../services/receipt_printer_service.dart';
 import '../../../services/sale_service.dart';
 import 'returns_refunds_screen.dart';
 
@@ -14,6 +17,29 @@ class PreviousSalesScreen extends StatefulWidget {
 
 class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
   final SaleService _saleService = SaleService();
+
+  Future<void> _printSaleReceipt(CompletedSaleModel sale) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Preparing sales receipt for POS printing...'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    try {
+      await ReceiptPrinterService.printSalesReceipt(sale);
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Failed to print receipt: $e'),
+            backgroundColor: Colors.red[800],
+          ),
+        );
+      }
+    }
+  }
 
   bool _isLoading = true;
   String? _error;
@@ -203,6 +229,16 @@ class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
               side: const BorderSide(color: Color(0xFF003366)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
+            icon: const Icon(Icons.print_outlined, size: 16),
+            label: const Text('Print Receipt'),
+            onPressed: () => _printSaleReceipt(sale),
+          ),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF003366),
+              side: const BorderSide(color: Color(0xFF003366)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
             icon: const Icon(Icons.assignment_return_outlined, size: 16),
             label: const Text('Return Items'),
             onPressed: () {
@@ -259,10 +295,10 @@ class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.scaffoldBg,
       appBar: AppBar(
         toolbarHeight: 52,
-        backgroundColor: const Color(0xFF003366),
+        backgroundColor: context.headerBg,
         foregroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
@@ -299,6 +335,10 @@ class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
             ),
           ],
         ),
+        actions: const [
+          ThemeToggleButton(),
+          SizedBox(width: 8),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Color(0xFF003366)))
@@ -339,10 +379,10 @@ class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
   Widget _buildSearchHeaderPanel() {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: context.surfaceCard,
         border: Border(
-          bottom: BorderSide(color: Color(0xFFE2E8F0), width: 1),
+          bottom: BorderSide(color: context.border, width: 1),
         ),
       ),
       child: Column(
@@ -353,29 +393,29 @@ class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
             height: 48,
             child: TextField(
               controller: _searchController,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: context.textPrimary),
               decoration: InputDecoration(
                 hintText: 'Search by invoice number, product name, or SKU...',
-                hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                hintStyle: TextStyle(color: context.textSecondary, fontSize: 13),
                 prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF003366), size: 22),
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
-                        icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF64748B)),
+                        icon: Icon(Icons.close_rounded, size: 18, color: context.textSecondary),
                         onPressed: () {
                           _searchController.clear();
                         },
                       )
                     : null,
                 filled: true,
-                fillColor: const Color(0xFFF8FAFC),
+                fillColor: context.inputBg,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  borderSide: BorderSide(color: context.border),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                  borderSide: BorderSide(color: context.border),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -393,15 +433,16 @@ class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
                 height: 38,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: context.inputBg,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: context.border),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
+                    dropdownColor: context.surfaceCard,
                     value: _selectedDateFilter,
                     icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF003366)),
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: context.textPrimary),
                     onChanged: (val) {
                       if (val != null) {
                         setState(() {
@@ -422,7 +463,7 @@ class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
               const Spacer(),
               Text(
                 'Showing ${_sales.length} ${_sales.length == 1 ? 'sale' : 'sales'}',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: context.textSecondary),
               ),
             ],
           ),
@@ -503,9 +544,9 @@ class _PreviousSalesScreenState extends State<PreviousSalesScreen> {
                 borderRadius: BorderRadius.circular(12),
                 child: Ink(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: context.surfaceCard,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(color: context.border),
                     boxShadow: const [
                       BoxShadow(
                         color: Color(0x06000000),

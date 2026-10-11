@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/theme_helper.dart';
+import '../../../core/theme/theme_toggle_button.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../models/category_model.dart';
 import '../../../models/product_model.dart';
@@ -250,7 +252,7 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: context.scaffoldBg,
       appBar: AppBar(
         toolbarHeight: 52,
         backgroundColor: const Color(0xFF003366),
@@ -290,6 +292,10 @@ class _SearchProductsScreenState extends State<SearchProductsScreen> {
             ),
           ],
         ),
+        actions: const [
+          ThemeToggleButton(),
+          SizedBox(width: 8),
+        ],
       ),
       body: _isLoading
           ? const Center(

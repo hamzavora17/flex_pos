@@ -281,7 +281,7 @@ void main() {
       final errors = tableErrors ?? {};
 
       // Known tables used by cashier dashboard service
-      const knownTables = ['profiles', 'employees', 'sales', 'shifts', 'attendance', 'held_sales'];
+      const knownTables = ['profiles', 'employees', 'sales', 'shifts', 'attendance', 'held_sales', 'sale_returns'];
       final allTables = <String>{...knownTables, ...responses.keys, ...inserts.keys, ...errors.keys};
 
       for (final table in allTables) {
@@ -730,6 +730,61 @@ void main() {
         () => service.getDashboardData(),
         returnsNormally,
       );
+    });
+
+    test('recentActivities includes return & refund transactions from sale_returns', () async {
+      final nowStr = DateTime.now().toUtc().toIso8601String();
+      configureMockClient(
+        tableResponses: {
+          'profiles': {
+            'id': testUserId,
+            'email': 'cashier@flexpos.com',
+            'full_name': 'Cashier',
+            'role': 'cashier',
+          },
+          'employees': {'position': 'Cashier'},
+          'sales': <dynamic>[
+            {
+              'id': 'sale-1',
+              'invoice_number': 'INV-1001',
+              'total': 500.0,
+              'status': 'completed',
+              'created_at': nowStr,
+              'payments': [
+                {'amount': 500.0, 'payment_method': 'cash'}
+              ]
+            }
+          ],
+          'sale_returns': <dynamic>[
+            {
+              'id': 'ret-1',
+              'sale_id': 'sale-1',
+              'refund_amount': 200.0,
+              'payment_method': 'cash',
+              'status': 'approved',
+              'is_damaged': false,
+              'created_at': nowStr,
+              'sales': {'invoice_number': 'INV-1001'}
+            }
+          ],
+          'shifts': null,
+          'attendance': null,
+          'held_sales': <dynamic>[],
+        },
+      );
+
+      final service = CashierDashboardService(
+        client: mockClient,
+        businessService: mockBusinessService,
+      );
+
+      final data = await service.getDashboardData();
+      final returnActivities = data.recentActivities.where((a) => a.type == 'return').toList();
+
+      expect(returnActivities.length, 1);
+      expect(returnActivities.first.title, 'Return & Refund #INV-1001');
+      expect(returnActivities.first.details, contains('200.00'));
+      expect(returnActivities.first.details, contains('Cash Refund'));
     });
 
     test('failed attendance write during startShiftOnLogin throws DashboardException and cleans up shift', () async {

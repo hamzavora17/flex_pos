@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/config/supabase_config.dart';
+import '../../../core/theme/theme_helper.dart';
+import '../../../core/theme/theme_toggle_button.dart';
 import '../../../models/admin_models.dart';
 import '../../../models/user_role.dart';
 import '../../../services/admin_dashboard_service.dart';
@@ -340,7 +342,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final isDesktop = MediaQuery.of(context).size.width > 900;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
+      backgroundColor: context.scaffoldBg,
       appBar: AppBar(
         title: Row(
           children: [
@@ -366,6 +368,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
+          const ThemeToggleButton(),
+          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign Out',
