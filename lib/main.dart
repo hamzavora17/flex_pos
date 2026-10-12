@@ -14,6 +14,7 @@ import 'features/cashier/presentation/employee_dashboard.dart';
 import 'features/manager/presentation/manager_dashboard.dart';
 import 'models/user_role.dart';
 import 'services/cashier_dashboard_service.dart';
+import 'services/password_reset_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -234,38 +235,23 @@ class _SplashScreenState extends State<SplashScreen> {
 }
 
 String _constructFlexPosEmail(String rawInput) {
-  var trimmed = rawInput.trim().toLowerCase();
-  while (trimmed.endsWith('@flexpos.com')) {
-    trimmed = trimmed.substring(0, trimmed.length - '@flexpos.com'.length).trim();
-  }
-  if (trimmed.endsWith('@')) {
-    trimmed = trimmed.substring(0, trimmed.length - 1).trim();
+  final trimmed = rawInput.trim();
+  if (trimmed.contains('@')) {
+    return trimmed;
   }
   return '$trimmed@flexpos.com';
 }
 
 String? _validateFlexPosUsername(String? value) {
   if (value == null || value.trim().isEmpty) {
-    return '⚠ Please enter your username';
+    return '⚠ Please enter your username or email';
   }
-  var clean = value.trim().toLowerCase();
-  while (clean.endsWith('@flexpos.com')) {
-    clean = clean.substring(0, clean.length - '@flexpos.com'.length).trim();
-  }
-  if (clean.endsWith('@')) {
-    clean = clean.substring(0, clean.length - 1).trim();
-  }
+  final clean = value.trim();
   if (clean.isEmpty) {
-    return '⚠ Please enter a valid username';
-  }
-  if (clean.contains('@')) {
-    return '⚠ Username should not contain "@"';
+    return '⚠ Please enter a valid username or email';
   }
   if (RegExp(r'\s').hasMatch(clean)) {
-    return '⚠ Username should not contain spaces';
-  }
-  if (!RegExp(r'^[a-zA-Z0-9._-]+$').hasMatch(clean)) {
-    return '⚠ Please enter a valid FlexPOS username';
+    return '⚠ Input should not contain spaces';
   }
   return null;
 }
@@ -526,11 +512,10 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         _AuthTextField(
           controller: _emailController,
           label: 'USERNAME / EMAIL',
-          hint: 'username',
+          hint: 'Enter your username or email',
           icon: Icons.person_outline_rounded,
-          fixedSuffixText: '@flexpos.com',
-          keyboardType: TextInputType.text,
-          maxLength: 30,
+          keyboardType: TextInputType.emailAddress,
+          maxLength: 50,
           enabled: !_isLoading,
           validator: _validateFlexPosUsername,
           onChanged: (val) {
@@ -752,7 +737,6 @@ class _AuthTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final int? maxLength;
   final bool? isObscured;
-  final String? fixedSuffixText;
   final void Function(bool)? onVisibilityChanged;
   final void Function(String)? onSubmitted;
   final String? Function(String?)? validator;
@@ -768,7 +752,6 @@ class _AuthTextField extends StatelessWidget {
     this.keyboardType,
     this.maxLength,
     this.isObscured,
-    this.fixedSuffixText,
     this.onVisibilityChanged,
     this.onSubmitted,
     this.validator,
@@ -778,24 +761,7 @@ class _AuthTextField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Widget? suffixWidget;
-    if (fixedSuffixText != null) {
-      suffixWidget = Padding(
-        padding: const EdgeInsets.only(right: 14),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              fixedSuffixText!,
-              style: const TextStyle(
-                color: Color(0xFF003366),
-                fontWeight: FontWeight.bold,
-                fontSize: 14.5,
-              ),
-            ),
-          ],
-        ),
-      );
-    } else if (isPassword) {
+    if (isPassword) {
       suffixWidget = IconButton(
         icon: Icon(
           (isObscured ?? true)
@@ -1323,23 +1289,39 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> with Singl
     super.dispose();
   }
 
+  String? _submitError;
+
   Future<void> _submit() async {
-    setState(() => _formSubmitted = true);
+    setState(() {
+      _formSubmitted = true;
+      _submitError = null;
+    });
     
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
-    // Simulate network delay
-    await Future.delayed(const Duration(milliseconds: 1000));
-    
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-        _isSubmitted = true;
-      });
-      // Re-trigger animation for success state
-      _animController.reset();
-      _animController.forward();
+
+    try {
+      final emailInput = _emailController.text.trim();
+      final fullEmail = _constructFlexPosEmail(emailInput);
+
+      await PasswordResetService().submitPasswordResetRequest(fullEmail);
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isSubmitted = true;
+        });
+        _animController.reset();
+        _animController.forward();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _submitError = e.toString().replaceAll('FlexPOSException: ', '');
+        });
+      }
     }
   }
 
@@ -1415,15 +1397,37 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> with Singl
             'Enter the email address associated with your FlexPOS account. Our administrator will help you reset your password.',
             style: TextStyle(color: Color(0xFF64748B), fontSize: 14, height: 1.5),
           ),
+          if (_submitError != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.shade200),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline_rounded, color: Colors.red, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _submitError!,
+                      style: TextStyle(color: Colors.red.shade800, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
           _AuthTextField(
             controller: _emailController,
             label: 'USERNAME / EMAIL',
-            hint: 'username',
+            hint: 'Enter your username or email',
             icon: Icons.person_outline_rounded,
-            fixedSuffixText: '@flexpos.com',
-            keyboardType: TextInputType.text,
-            maxLength: 30,
+            keyboardType: TextInputType.emailAddress,
+            maxLength: 50,
             enabled: !_isLoading,
             onSubmitted: (_) => _submit(),
             validator: _validateFlexPosUsername,

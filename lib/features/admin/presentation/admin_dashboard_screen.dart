@@ -7,12 +7,15 @@ import '../../../models/admin_models.dart';
 import '../../../models/user_role.dart';
 import '../../../services/admin_dashboard_service.dart';
 import '../../../services/admin_user_service.dart';
+import '../../../services/password_reset_service.dart';
 import '../../../services/exceptions.dart';
 import '../../../main.dart';
 import '../../../core/theme/app_logo_widget.dart';
 import '../../../core/theme/app_name_controller.dart';
+import 'admin_notifications_view.dart';
 import 'admin_overview_view.dart';
 import 'admin_settings_view.dart';
+import 'admin_support_view.dart';
 import 'admin_system_health_view.dart';
 import 'admin_user_management_view.dart';
 
@@ -27,12 +30,14 @@ class AdminDashboardScreen extends StatefulWidget {
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final AdminDashboardService _adminService = AdminDashboardService();
   final AdminUserService _adminUserService = AdminUserService();
+  final PasswordResetService _passwordResetService = PasswordResetService();
 
   int _selectedTabIndex = 0;
 
   AdminDashboardStats? _stats;
   List<RevenueChartPoint> _chartPoints = [];
   List<AdminActivityLog> _recentActivities = [];
+  int _pendingResetCount = 0;
 
   String _chartPeriod = 'last_7_days';
   bool _isLoading = true;
@@ -70,14 +75,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       final statsFuture = _adminService.getDashboardStats();
       final chartFuture = _adminService.getRevenueChartData(period: _chartPeriod);
       final activityFuture = _adminService.getActivityLogs(limit: 10);
+      final resetCountFuture = _passwordResetService.getPendingRequestsCount();
 
-      final results = await Future.wait([statsFuture, chartFuture, activityFuture]);
+      final results = await Future.wait([statsFuture, chartFuture, activityFuture, resetCountFuture]);
 
       if (mounted) {
         setState(() {
           _stats = results[0] as AdminDashboardStats;
           _chartPoints = results[1] as List<RevenueChartPoint>;
           _recentActivities = results[2] as List<AdminActivityLog>;
+          _pendingResetCount = results[3] as int;
           _isLoading = false;
         });
       }
@@ -102,6 +109,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     } catch (e) {
       debugPrint('[AdminDashboardScreen] Error updating chart period: $e');
     }
+  }
+
+  String _getNotificationButtonLabel(int count) {
+    if (count <= 0) return 'Notifications';
+    const circled = ['❶', '❷', '❸', '❹', '❺', '❻', '❼', '❽', '❾', '❿'];
+    if (count <= 10) {
+      return 'Notifications ${circled[count - 1]}';
+    }
+    return 'Notifications ($count)';
   }
 
   void _showAssignRoleDialog(BuildContext context) {
@@ -148,33 +164,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ],
                     ),
                     content: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.red.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.red.shade200),
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    displayErr,
-                                    style: const TextStyle(color: Colors.red, fontSize: 13, fontWeight: FontWeight.w600),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                      child: Text(displayErr),
                     ),
                     actions: [
                       TextButton(
@@ -186,18 +176,25 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 }
 
                 final users = snapshot.data ?? [];
-                if (selectedUser == null && users.isNotEmpty) {
-                  selectedUser = users.first;
+                if (users.isEmpty) {
+                  return AlertDialog(
+                    title: const Text('Assign Manager or Cashier Role'),
+                    content: const Text(
+                      'No unassigned system accounts were found in auth.users or profiles.\n\nAll existing users already have active roles.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Close'),
+                      ),
+                    ],
+                  );
                 }
 
+                selectedUser ??= users.first;
+
                 return AlertDialog(
-                  title: const Row(
-                    children: [
-                      Icon(Icons.manage_accounts, color: Color(0xFF003366)),
-                      SizedBox(width: 8),
-                      Text('Assign Store Staff Role'),
-                    ],
-                  ),
+                  title: const Text('Assign Manager or Cashier Role'),
                   content: SingleChildScrollView(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -208,47 +205,44 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
                               color: Colors.red.shade50,
-                              borderRadius: BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(8),
                               border: Border.all(color: Colors.red.shade200),
                             ),
-                            child: Text(
-                              errorMessage!,
-                              style: const TextStyle(color: Colors.red, fontSize: 13),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    errorMessage!,
+                                    style: TextStyle(color: Colors.red.shade900, fontSize: 13),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           const SizedBox(height: 12),
                         ],
-                        const Text('Select Target User Profile:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const Text('Select Unassigned User Account:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                         const SizedBox(height: 6),
-                        if (users.isEmpty)
-                          const Text(
-                            'No eligible non-admin profiles found.',
-                            style: TextStyle(color: Colors.grey, fontSize: 13),
-                          )
-                        else
-                          DropdownButtonFormField<Map<String, String>>(
-                            initialValue: selectedUser,
-                            isExpanded: true,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            ),
-                            items: users.map((user) {
-                              return DropdownMenuItem<Map<String, String>>(
-                                value: user,
-                                child: Text(
-                                  user['name'] ?? '',
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 13),
-                                ),
-                              );
-                            }).toList(),
-                            onChanged: (val) {
-                              if (val != null) {
-                                setDialogState(() => selectedUser = val);
-                              }
-                            },
+                        DropdownButtonFormField<Map<String, String>>(
+                          initialValue: selectedUser,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           ),
+                          items: users.map((u) {
+                            return DropdownMenuItem<Map<String, String>>(
+                              value: u,
+                              child: Text('${u['email']} (${u['fullName'] ?? 'User'})'),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setDialogState(() => selectedUser = val);
+                            }
+                          },
+                        ),
                         const SizedBox(height: 16),
                         const Text('Assign Store Role:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                         const SizedBox(height: 6),
@@ -365,6 +359,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
+          // Live Notifications Button linked to Forgot Password requests
+          TextButton.icon(
+            style: TextButton.styleFrom(
+              backgroundColor: _pendingResetCount > 0 ? Colors.amber.shade700 : Colors.white.withValues(alpha: 0.12),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            ),
+            icon: Icon(
+              _pendingResetCount > 0 ? Icons.notifications_active_rounded : Icons.notifications_none_rounded,
+              size: 18,
+            ),
+            label: Text(
+              _getNotificationButtonLabel(_pendingResetCount),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            onPressed: () {
+              setState(() => _selectedTabIndex = 4);
+            },
+          ),
+          const SizedBox(width: 8),
           const ThemeToggleButton(),
           const SizedBox(width: 4),
           IconButton(
@@ -382,6 +397,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               }
             },
           ),
+          const SizedBox(width: 8),
         ],
       ),
       drawer: !isDesktop
@@ -437,14 +453,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         _buildSidebarItem(1, Icons.people, 'User Management'),
         _buildSidebarItem(2, Icons.settings, 'System Settings'),
         _buildSidebarItem(3, Icons.health_and_safety, 'System Health'),
+        _buildSidebarItem(4, Icons.notifications_active_rounded, 'Notifications', badgeCount: _pendingResetCount),
         const Spacer(),
-        _buildSidebarItem(4, Icons.help_outline, 'Support'),
+        _buildSidebarItem(5, Icons.help_outline, 'Support'),
         const SizedBox(height: 24),
       ],
     );
   }
 
-  Widget _buildSidebarItem(int index, IconData icon, String label) {
+  Widget _buildSidebarItem(int index, IconData icon, String label, {int badgeCount = 0}) {
     final isSelected = _selectedTabIndex == index;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -454,13 +471,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
       child: ListTile(
         leading: Icon(icon, color: isSelected ? Colors.white : Colors.white60, size: 20),
-        title: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? Colors.white : Colors.white60,
-            fontSize: 14,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.white60,
+                  fontSize: 14,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ),
+            if (badgeCount > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$badgeCount',
+                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ),
+          ],
         ),
         onTap: () {
           setState(() => _selectedTabIndex = index);
@@ -495,7 +530,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       case 3:
         return AdminSystemHealthView(adminService: _adminService, stats: _stats);
       case 4:
-        return _buildSupportView();
+        return AdminNotificationsView(
+          onRequestResolved: () => _loadAllDashboardData(silent: true),
+        );
+      case 5:
+        return AdminSupportView(adminService: _adminService);
       default:
         return AdminOverviewView(
           stats: _stats,
@@ -508,55 +547,5 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           errorMessage: _errorMessage,
         );
     }
-  }
-
-  Widget _buildSupportView() {
-    return Padding(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'System Support & Documentation',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
-          ),
-          const SizedBox(height: 8),
-          Text('FlexPOS Administrator technical assistance and operational guidance', style: TextStyle(color: Colors.grey[600])),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10, offset: const Offset(0, 4)),
-              ],
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ListTile(
-                  leading: Icon(Icons.mark_email_read, color: Color(0xFF003366)),
-                  title: Text('System Administrator Support', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('Contact: admin-support@flexpos.com'),
-                ),
-                Divider(),
-                ListTile(
-                  leading: Icon(Icons.security, color: Color(0xFF003366)),
-                  title: Text('Security & Access Control', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('Role assignments and profile elevations are strictly enforced via PostgreSQL RLS and Security Definer RPCs.'),
-                ),
-                Divider(),
-                ListTile(
-                  leading: Icon(Icons.sync, color: Color(0xFF003366)),
-                  title: Text('Realtime Synchronization', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('All sales transactions and business updates from cashiers and managers update the Admin Dashboard automatically in real time.'),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

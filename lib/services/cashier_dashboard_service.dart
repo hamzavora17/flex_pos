@@ -43,6 +43,7 @@ class CashierDashboardData {
   final String userId;
   final String fullName;
   final String email;
+  final String phone;
   final String role;
   final String position;
   final String terminalId;
@@ -62,6 +63,7 @@ class CashierDashboardData {
     required this.userId,
     required this.fullName,
     required this.email,
+    this.phone = '',
     required this.role,
     required this.position,
     required this.terminalId,
@@ -238,7 +240,7 @@ class CashierDashboardService {
     try {
       profileRes = await c
           .from('profiles')
-          .select('id, email, full_name, role')
+          .select('id, email, full_name, phone, role')
           .eq('id', userId)
           .maybeSingle();
     } catch (e) {
@@ -270,6 +272,7 @@ class CashierDashboardService {
     }
 
     final String userEmail = profileRes['email']?.toString() ?? user.email ?? '';
+    final String userPhone = profileRes['phone']?.toString() ?? '';
     String userFullName = profileRes['full_name']?.toString() ?? '';
     final String userRoleStr = parsedRole == UserRole.cashier
         ? 'EMPLOYEE'
@@ -535,6 +538,7 @@ class CashierDashboardService {
       userId: userId,
       fullName: userFullName,
       email: userEmail,
+      phone: userPhone,
       role: userRoleStr,
       position: position.toUpperCase(),
       terminalId: 'POS-TERM-01',

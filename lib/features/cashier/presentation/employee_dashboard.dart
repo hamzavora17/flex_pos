@@ -199,6 +199,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   void _showProfileDialog() {
     final name = _dashboardData?.fullName ?? 'Cashier';
     final email = _dashboardData?.email ?? 'cashier@flexpos.com';
+    final phone = _dashboardData?.phone ?? '';
     final role = _dashboardData?.position ?? 'CASHIER';
     final terminal = _dashboardData?.terminalId ?? 'POS-TERM-01';
 
@@ -266,6 +267,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               const SizedBox(height: 14),
               _buildProfileDetailRow(Icons.email_outlined, 'Email Address (Read-Only)', email, isProtected: true),
               const SizedBox(height: 8),
+              _buildProfileDetailRow(Icons.phone_outlined, 'Phone Number', phone.isNotEmpty ? phone : 'Not set'),
+              const SizedBox(height: 8),
               _buildProfileDetailRow(
                 Icons.access_time_outlined,
                 'Shift Status',
@@ -306,10 +309,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               foregroundColor: Colors.white,
             ),
             icon: const Icon(Icons.edit, size: 16),
-            label: const Text('Edit Name'),
+            label: const Text('Edit Profile'),
             onPressed: () {
               Navigator.of(ctx).pop();
-              _showEditNameDialog(name);
+              _showEditProfileDialog(name, phone);
             },
           ),
           TextButton(
@@ -321,8 +324,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     );
   }
 
-  void _showEditNameDialog(String currentName) {
-    final controller = TextEditingController(text: currentName);
+  void _showEditProfileDialog(String currentName, String currentPhone) {
+    final nameController = TextEditingController(text: currentName);
+    final phoneController = TextEditingController(text: currentPhone);
     bool isSaving = false;
 
     showDialog(
@@ -330,7 +334,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       builder: (dialogCtx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: const Text('Edit Full Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          title: const Text('Edit Profile Details', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           content: SizedBox(
             width: 340,
             child: Column(
@@ -340,10 +344,22 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 const Text('Full Name', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 6),
                 TextField(
-                  controller: controller,
+                  controller: nameController,
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
                     hintText: 'Enter full name',
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text('Phone Number', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: phoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: 'Enter phone number',
                     isDense: true,
                   ),
                 ),
@@ -384,32 +400,42 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               onPressed: isSaving
                   ? null
                   : () async {
-                      final newName = controller.text.trim();
+                      final newName = nameController.text.trim();
+                      final newPhone = phoneController.text.trim();
                       if (newName.isEmpty) return;
 
                       setDialogState(() => isSaving = true);
                       final user = Supabase.instance.client.auth.currentUser;
-                      if (user != null) {
-                        try {
-                          await Supabase.instance.client
-                              .from('profiles')
-                              .update({'full_name': newName})
-                              .eq('id', user.id);
+                      if (user == null) return;
 
-                          if (mounted) {
-                            Navigator.of(dialogCtx).pop();
-                            await _loadDashboardData();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Profile name updated successfully.')),
-                            );
-                          }
-                        } catch (e) {
-                          if (mounted) {
-                            setDialogState(() => isSaving = false);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Failed to update name: $e')),
-                            );
-                          }
+                      setDialogState(() => isSaving = true);
+                      final navigator = Navigator.of(dialogCtx);
+                      final messenger = ScaffoldMessenger.of(context);
+
+                      try {
+                        await Supabase.instance.client
+                            .from('profiles')
+                            .update({
+                              'full_name': newName,
+                              'phone': newPhone,
+                            })
+                            .eq('id', user.id);
+
+                        navigator.pop();
+                        if (!mounted) return;
+                        await _loadDashboardData();
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Profile updated successfully.')),
+                        );
+                      } catch (e) {
+                        if (dialogCtx.mounted) {
+                          setDialogState(() => isSaving = false);
+                        }
+                        if (mounted) {
+                          ScaffoldMessenger.of(this.context).showSnackBar(
+                            SnackBar(content: Text('Failed to update profile: $e')),
+                          );
                         }
                       }
                     },
@@ -419,7 +445,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                     )
-                  : const Text('Save Name'),
+                  : const Text('Save Profile'),
             ),
           ],
         ),

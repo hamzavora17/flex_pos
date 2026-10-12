@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/config/supabase_config.dart';
 
-/// Screen allowing Managers to view their profile, edit their full name, while protecting email as immutable.
+/// Screen allowing Managers to view their profile, edit their full name and phone number, while protecting email as immutable.
 class ManagerProfileScreen extends StatefulWidget {
   const ManagerProfileScreen({super.key});
 
@@ -12,6 +12,7 @@ class ManagerProfileScreen extends StatefulWidget {
 
 class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
   final TextEditingController _fullNameController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
 
   String _email = '';
   String _roleLabel = 'Manager';
@@ -29,6 +30,7 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
   @override
   void dispose() {
     _fullNameController.dispose();
+    _phoneController.dispose();
     super.dispose();
   }
 
@@ -38,6 +40,7 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
         setState(() {
           _email = '';
           _fullNameController.text = 'Manager';
+          _phoneController.text = '';
           _isLoading = false;
         });
       }
@@ -50,12 +53,13 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
         _email = user.email ?? '';
         final profileRes = await Supabase.instance.client
             .from('profiles')
-            .select('full_name, email, role')
+            .select('full_name, phone, email, role')
             .eq('id', user.id)
             .maybeSingle();
 
         if (profileRes != null) {
           _fullNameController.text = profileRes['full_name']?.toString() ?? '';
+          _phoneController.text = profileRes['phone']?.toString() ?? '';
           _email = profileRes['email']?.toString() ?? _email;
           final rawRole = profileRes['role']?.toString() ?? 'manager';
           _roleLabel = rawRole.toUpperCase();
@@ -70,8 +74,9 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
     }
   }
 
-  Future<void> _saveName() async {
+  Future<void> _saveProfile() async {
     final newName = _fullNameController.text.trim();
+    final newPhone = _phoneController.text.trim();
     if (newName.isEmpty) {
       setState(() {
         _message = 'Name cannot be empty.';
@@ -92,7 +97,10 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
         if (user != null) {
           await Supabase.instance.client
               .from('profiles')
-              .update({'full_name': newName})
+              .update({
+                'full_name': newName,
+                'phone': newPhone,
+              })
               .eq('id', user.id);
         }
       }
@@ -100,7 +108,7 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
       if (mounted) {
         setState(() {
           _isSaving = false;
-          _message = 'Profile name updated successfully!';
+          _message = 'Profile details updated successfully!';
           _isError = false;
         });
       }
@@ -108,7 +116,7 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
       if (mounted) {
         setState(() {
           _isSaving = false;
-          _message = 'Failed to update profile name: $e';
+          _message = 'Failed to update profile details: $e';
           _isError = true;
         });
       }
@@ -257,6 +265,23 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
                         ),
                         const SizedBox(height: 20),
 
+                        // Editable Phone Number
+                        const Text(
+                          'Phone Number:',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: _phoneController,
+                          keyboardType: TextInputType.phone,
+                          decoration: InputDecoration(
+                            hintText: 'Enter phone number',
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+
                         // Read-Only Immutable Email
                         Row(
                           children: const [
@@ -315,7 +340,7 @@ class _ManagerProfileScreenState extends State<ManagerProfileScreen> {
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
-                            onPressed: _isSaving ? null : _saveName,
+                            onPressed: _isSaving ? null : _saveProfile,
                             child: _isSaving
                                 ? const SizedBox(
                                     width: 18,

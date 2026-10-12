@@ -339,3 +339,51 @@ class AdminUserSummary {
     );
   }
 }
+
+/// Represents a password reset request submitted from the login page for Admin notifications.
+class PasswordResetRequestModel {
+  final String id;
+  final String email;
+  final String status; // 'pending', 'resolved', 'rejected'
+  final String? adminNotes;
+  final DateTime createdAt;
+  final DateTime? resolvedAt;
+
+  const PasswordResetRequestModel({
+    required this.id,
+    required this.email,
+    required this.status,
+    this.adminNotes,
+    required this.createdAt,
+    this.resolvedAt,
+  });
+
+  bool get isPending => status == 'pending';
+  bool get isResolved => status == 'resolved';
+
+  factory PasswordResetRequestModel.fromMap(Map<String, dynamic> map) {
+    return PasswordResetRequestModel(
+      id: map['id']?.toString() ?? '',
+      email: map['email']?.toString() ?? '',
+      status: map['status']?.toString() ?? 'pending',
+      adminNotes: map['admin_notes']?.toString(),
+      createdAt: map['created_at'] != null
+          ? DateTime.parse(map['created_at'].toString()).toLocal()
+          : DateTime.now(),
+      resolvedAt: map['resolved_at'] != null
+          ? DateTime.parse(map['resolved_at'].toString()).toLocal()
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'email': email,
+      'status': status,
+      'admin_notes': adminNotes,
+      'created_at': createdAt.toIso8601String(),
+      'resolved_at': resolvedAt?.toIso8601String(),
+    };
+  }
+}

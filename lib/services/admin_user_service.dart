@@ -121,4 +121,93 @@ class AdminUserService {
       throw FlexPOSException('An error occurred while assigning user role: $e');
     }
   }
+
+  /// Creates a new user account (auth.users + profiles + employees).
+  Future<Map<String, dynamic>> createUser({
+    required String email,
+    required String password,
+    required String fullName,
+    required String role,
+  }) async {
+    final c = client;
+    if (c == null) {
+      throw const FlexPOSException('Supabase is not configured.');
+    }
+
+    try {
+      final response = await c.rpc('admin_create_user', params: {
+        'p_email': email.trim(),
+        'p_password': password.trim(),
+        'p_full_name': fullName.trim(),
+        'p_role': role.trim().toLowerCase(),
+      });
+      if (response is Map) {
+        return Map<String, dynamic>.from(response);
+      }
+      return {'success': true};
+    } on PostgrestException catch (e) {
+      debugPrint('[AdminUserService] Postgrest error creating user: ${e.message}');
+      throw FlexPOSException('Failed to create user: ${e.message}');
+    } catch (e) {
+      debugPrint('[AdminUserService] Error creating user: $e');
+      if (e is FlexPOSException) rethrow;
+      throw FlexPOSException('An error occurred while creating user: $e');
+    }
+  }
+
+  /// Updates an existing user's profile, role, or password.
+  Future<Map<String, dynamic>> updateUser({
+    required String userId,
+    String? fullName,
+    String? email,
+    String? role,
+    String? newPassword,
+  }) async {
+    final c = client;
+    if (c == null) {
+      throw const FlexPOSException('Supabase is not configured.');
+    }
+
+    try {
+      final response = await c.rpc('admin_update_user', params: {
+        'p_user_id': userId,
+        'p_full_name': fullName?.trim(),
+        'p_email': email?.trim(),
+        'p_role': role?.trim().toLowerCase(),
+        'p_new_password': newPassword != null && newPassword.trim().isNotEmpty ? newPassword.trim() : null,
+      });
+      if (response is Map) {
+        return Map<String, dynamic>.from(response);
+      }
+      return {'success': true};
+    } on PostgrestException catch (e) {
+      debugPrint('[AdminUserService] Postgrest error updating user: ${e.message}');
+      throw FlexPOSException('Failed to update user: ${e.message}');
+    } catch (e) {
+      debugPrint('[AdminUserService] Error updating user: $e');
+      if (e is FlexPOSException) rethrow;
+      throw FlexPOSException('An error occurred while updating user: $e');
+    }
+  }
+
+  /// Deletes a user account.
+  Future<void> deleteUser(String userId) async {
+    final c = client;
+    if (c == null) {
+      throw const FlexPOSException('Supabase is not configured.');
+    }
+
+    try {
+      await c.rpc('admin_delete_user', params: {
+        'p_user_id': userId,
+      });
+    } on PostgrestException catch (e) {
+      debugPrint('[AdminUserService] Postgrest error deleting user: ${e.message}');
+      throw FlexPOSException('Failed to delete user: ${e.message}');
+    } catch (e) {
+      debugPrint('[AdminUserService] Error deleting user: $e');
+      if (e is FlexPOSException) rethrow;
+      throw FlexPOSException('An error occurred while deleting user: $e');
+    }
+  }
 }
